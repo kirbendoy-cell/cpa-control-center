@@ -4,53 +4,97 @@
 
 Desktop operations tool for CPA-managed Codex auth pools.
 
-This project starts from a very practical observation: once an auth pool grows beyond a small scale, relying on a browser tab or manually visiting `localhost` to manage it becomes fragmented, easy to ignore, and easy to miss anomalies. `CPA Control Center` wraps the existing CPA management APIs into a focused desktop app. It requires no extra deployment, and once you connect it to your CPA instance, you can scan, inspect anomalies, run maintenance, and export results from one place.
+`CPA Control Center` packages the existing CPA management endpoints into a focused desktop app. It is designed for operators who do not want to manage auth pools through browser tabs, localhost pages, or terminal scripts once the pool grows large.
+
+You connect it to a CPA instance with a `Base URL` and a `Management Token`, then handle inventory sync, scanning, maintenance, logs, history, and exports from one native window.
 
 ## Acknowledgement and Intended Backend
 
 - This project is explicitly inspired by and borrows workflow ideas from [`fantasticjoe/cpa-warden`](https://github.com/fantasticjoe/cpa-warden).
-- This desktop tool is intended to be used with [`router-for-me/CLIProxyAPI`](https://github.com/router-for-me/CLIProxyAPI) as the CPA backend that exposes the management endpoints consumed by the app.
+- This desktop tool is intended to be used with [`router-for-me/CLIProxyAPI`](https://github.com/router-for-me/CLIProxyAPI) as the CPA backend exposing the management endpoints consumed by the app.
 
 ## Overview
 
 - Native desktop app built with Wails, Go, Vue 3, and TypeScript
 - Only requires `Base URL` and `Management Token`
-- Scans Codex auth pools through CPA management endpoints
-- Automatically classifies accounts into `Normal`, `401 Invalid`, `Quota Limited`, `Recovered`, and `Error`
-- Shows confirmation dialogs before maintenance actions to avoid mistakes
-- Supports scan history, paginated details, live task logs, and CSV/JSON export
+- Inventory-first startup flow for large pools
+- Backend pagination for accounts and scan details
+- Unified state model: `Pending`, `Normal`, `401 Invalid`, `Quota Limited`, `Recovered`, `Error`
+- One-click scan and one-click maintenance
+- Live task logs and scan history
+- CSV / JSON export for `401 Invalid` and `Quota Limited`
 - Built-in bilingual interface: English and Simplified Chinese
 
 ## Who This Is For
 
 This project is a good fit if:
 
-- you have already deployed CPA and enabled management endpoints
-- you maintain a Codex-focused auth pool, with possible expansion to other channels later
-- you want a desktop app that works immediately without any extra deployment
-- you want scanning, maintenance, logs, and exports inside one tool
+- you already deployed CPA and enabled management endpoints
+- you maintain a Codex-focused auth pool
+- you want a desktop app that works immediately without extra deployment
+- you want scan, maintenance, logs, and exports in one place
 
 This project is not currently focused on:
 
 - creating or importing auth files from the GUI
 - running OAuth login flows inside the desktop app
-- becoming a general-purpose admin panel for every CPA capability
+- becoming a full general-purpose CPA admin panel
 
 ## What Problem It Solves
 
-The pain point in large auth pools is usually not total failure. It is mixed operational states:
+Large auth pools usually do not fail all at once. They drift into mixed operational states:
 
 - some accounts are already `401 Invalid`
 - some accounts hit quota limits
+- some accounts are temporarily probe-failed but recover on retry
 - some accounts were disabled earlier and are now recoverable
-- some probe failures are only temporary network or upstream issues
 
-The app is designed around two goals:
+The app is built around two goals:
 
-1. Give you a fast, reliable picture of current pool health.
-2. Let you run controlled, repeatable maintenance on the latest scan result.
+1. Give you a fast and reliable picture of pool health.
+2. Let you apply repeatable maintenance rules on top of the latest scan result.
 
-## What It Can Do
+## Current Workflow
+
+The current product flow is intentionally split into stages:
+
+1. Save CPA connection settings.
+2. Sync inventory from CPA into the local snapshot.
+3. Show the pool as tracked inventory even before the first scan.
+4. Run a scan when you want health states to be established.
+5. Run maintenance only after reviewing the latest scan result.
+
+This matters for large pools. A first connection no longer needs to immediately probe thousands of accounts just to make the UI usable.
+
+## First Connection Behavior
+
+After **Test & Save** succeeds, the app now performs a lightweight inventory sync:
+
+- it fetches auth files from CPA
+- stores the local inventory snapshot
+- marks newly seen records as `Pending`
+- makes the dashboard and account list usable before the first full scan
+
+That means:
+
+- the dashboard can show tracked counts immediately
+- the account table is available immediately
+- health classification is incomplete until the first scan finishes
+
+## State Model
+
+The app uses a compact state model across dashboard, list views, maintenance, and export:
+
+- `Pending`: inventory synced locally, not probed yet
+- `Normal`
+- `401 Invalid`
+- `Quota Limited`
+- `Recovered`
+- `Error`
+
+`Pending` is especially important for large pools and first-time setup. It distinguishes “known inventory, not yet scanned” from actual probe outcomes.
+
+## Core Capabilities
 
 ### 1. Connect to CPA
 
@@ -59,39 +103,36 @@ You only need:
 - `Base URL`
 - `Management Token`
 
-The app can test connectivity before saving, and the connection test itself does not trigger a scan.
+The connection test itself does not trigger a scan.
 
-### 2. Scan the Pool
+### 2. Sync Inventory
 
-When you click **Scan Now**, the app will:
+Inventory sync:
 
-1. load the full auth inventory from CPA
-2. apply your configured `targetType` and `provider` filters
-3. probe matching accounts concurrently
-4. write the latest local snapshot
-5. record a scan history entry for later inspection
+- fetches auth metadata from CPA
+- persists the local tracked pool
+- prepares the app for large-pool usage
+- avoids a blank dashboard on first use
 
-### 3. Apply Unified State Classification
+### 3. Scan the Pool
 
-Scan results are normalized into a compact set of operationally useful states:
+When you click **Scan Now**, the app:
 
-- `Normal`
-- `401 Invalid`
-- `Quota Limited`
-- `Recovered`
-- `Error`
-
-The dashboard, account list, maintenance rules, and export logic all use this same state model.
+1. loads the latest auth inventory from CPA
+2. applies `targetType` and `provider` filters
+3. probes matching accounts concurrently
+4. writes the latest snapshot
+5. records a scan-history entry
 
 ### 4. Run Maintenance
 
-When you click **Run Maintenance**, the app first performs a fresh scan and then applies your configured rules:
+When you click **Run Maintain**, the app first performs a fresh scan and then applies the configured rules:
 
 - delete `401 Invalid` accounts
 - `disable` or `delete` quota-limited accounts
-- automatically re-enable recovered accounts
+- re-enable recovered accounts
 
-All destructive actions require confirmation first.
+All destructive operations require confirmation first.
 
 ### 5. Review History and Logs
 
@@ -102,42 +143,19 @@ The app keeps:
 - paginated scan details
 - live task logs and progress events
 
-If you enable **Detailed Logs** in Settings, you will also see per-account probe and maintenance messages.
+If **Detailed Logs** is enabled, the task log also shows per-account scan and maintenance details.
 
 ### 6. Export Problem Sets
 
-You can export the current:
+You can export:
 
-- `401 Invalid` accounts
-- `Quota Limited` accounts
+- current `401 Invalid` accounts
+- current `Quota Limited` accounts
 
 Formats:
 
 - JSON
 - CSV
-
-## Core Capabilities
-
-- desktop-first operations workflow
-- dashboard health overview and recent scan history
-- real-time account table with search, filter, and pagination
-- single-account probe, disable/enable, and delete actions
-- live scan and maintenance progress in the task log stream
-- automatic retries for recoverable transient probe failures
-- local persistence with `settings.json`, `state.db`, and `app.log`
-- Windows build support and a completed macOS build pipeline
-- GitHub Actions-based automated builds and tag-based Release publishing
-
-## Real Workflow
-
-If you want the shortest possible mental model, it is this:
-
-1. Save CPA connection settings.
-2. Click **Scan Now**.
-3. Review the dashboard and recent scan history.
-4. Open scan details if you need to inspect specific accounts.
-5. Click **Run Maintenance** when the latest scan matches your intent.
-6. Export `401` or `Quota Limited` results when you need to hand them off elsewhere.
 
 ## Page Structure
 
@@ -145,21 +163,21 @@ If you want the shortest possible mental model, it is this:
 
 - pool health overview
 - recent scan history
-- scan details drawer with backend pagination
-- one-click scan and one-click maintenance entry points
+- paginated scan detail drawer
+- one-click scan and maintenance actions
 
 ### Accounts
 
-- real-time account table
-- full-dataset search before pagination
+- server-paged account table
+- full-dataset search handled on the backend
 - state and provider filters
-- single-account actions
+- single-account probe, disable/enable, and delete actions
 
 ### Logs
 
-- real-time task stream
-- current progress is visible whether detailed logs are enabled or not
-- enabling detailed logs exposes per-account messages
+- live task stream
+- current progress is always visible
+- optional detailed per-account logs
 
 ### Settings
 
@@ -169,11 +187,23 @@ If you want the shortest possible mental model, it is this:
 - retry count
 - quota-handling strategy
 - export directory
-- log verbosity
+- detailed-log toggle
+
+## Large Pool Notes
+
+The current implementation is designed to behave better on pools with thousands of auth files:
+
+- first connection performs inventory sync instead of immediate full probing
+- dashboard no longer ships the full account list to the frontend
+- accounts use backend pagination
+- scan details use backend pagination
+- the app keeps `Pending` states for synced-but-unscanned records
+
+This is not the final performance ceiling, but it is already a large step up from the earlier full-snapshot frontend model.
 
 ## CPA Endpoints Used
 
-This app intentionally stays focused and depends on only a small set of CPA management endpoints:
+The app intentionally stays focused and only depends on a small set of CPA management endpoints:
 
 - `GET /v0/management/auth-files`
 - `POST /v0/management/api-call`
@@ -185,8 +215,6 @@ Pool health probing goes through CPA and targets:
 - `https://chatgpt.com/backend-api/wham/usage`
 
 ## Default Behavior
-
-The default configuration is:
 
 | Setting | Default |
 | --- | --- |
@@ -205,8 +233,8 @@ The default configuration is:
 
 Retries are split into two layers:
 
-- request-level retries for outer request failures and transient CPA errors (`408`, `429`, `5xx`)
-- probe-level retries for recoverable probe anomalies such as temporary upstream issues or incomplete response payloads
+- request-level retries for outer request failures and transient CPA errors such as `408`, `429`, and `5xx`
+- probe-level retries for recoverable probe anomalies such as temporary upstream failures, invalid payloads, or retryable upstream status codes
 
 The app does not blindly retry final business outcomes such as:
 
@@ -277,8 +305,8 @@ bash ./scripts/build-macos.sh
 
 - This is an operations tool, not a demo page. Maintenance actions can delete or disable accounts.
 - Review the latest scan result before running maintenance.
-- If you are validating a new CPA environment, it is safer to turn off `delete401` first and observe results.
-- Detailed logs are great for troubleshooting large pools, but they can become noisy.
+- If you are validating a new CPA environment, consider turning off `delete401` first.
+- Detailed logs are useful for troubleshooting, but they can become noisy on large pools.
 
 ## Current Scope
 
@@ -286,7 +314,7 @@ This project currently focuses on:
 
 - managing existing CPA auth files
 - health probing and maintenance for Codex pools
-- Windows-first user experience while also providing a macOS build path
+- a Windows-first desktop experience while also providing a macOS build path
 
 It does not currently include:
 
@@ -305,13 +333,21 @@ No. It is a Wails desktop application and opens in its own native window.
 
 No. It is a focused desktop operations tool for auth-pool health and maintenance.
 
-### Does “Run Maintenance” scan first?
+### Why do I see tracked accounts before the first scan?
 
-Yes. Maintenance always starts from a fresh scan and then applies your maintenance rules.
+Because the app now syncs inventory first. It can show tracked records immediately, while health states remain `Pending` until probing completes.
+
+### Does “Run Maintain” scan first?
+
+Yes. Maintenance always starts from a fresh scan and then applies the maintenance rules.
 
 ### Can scan details handle large result sets?
 
-Yes. Scan details are paginated on the backend and are not loaded all at once into the drawer.
+Yes. Scan details are paginated on the backend and are not loaded into the drawer all at once.
+
+### Is there a debug mode?
+
+Yes, but it is hidden. Press `Ctrl + Shift + D` to open the internal debug panel used for startup and dashboard troubleshooting.
 
 ### Is macOS supported?
 
@@ -327,4 +363,4 @@ The build path is already in place. Production macOS artifacts should be generat
 
 ## Current Status
 
-The app is already usable for real CPA pool operations, but it is still an evolving practical tool. The current priority remains reliability, clarity, and maintainability instead of feature sprawl.
+The app is already usable for real CPA pool operations, but it is still an evolving practical tool. The priority remains reliability, clarity, and maintainability over feature sprawl.
