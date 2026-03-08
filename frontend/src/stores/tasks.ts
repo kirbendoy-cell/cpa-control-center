@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { EventsOff, EventsOn } from '../../wailsjs/runtime/runtime'
 import { CancelScan, RunMaintain, RunScan } from '../../wailsjs/go/main/App'
 import { i18n } from '@/i18n'
-import type { AccountUpdate, LogEntry, MaintainOptions, TaskProgress } from '@/types'
+import type { LogEntry, MaintainOptions, TaskProgress } from '@/types'
 import { toErrorMessage } from '@/utils/errors'
 import { useAccountsStore } from '@/stores/accounts'
 import { taskPhaseLabel } from '@/utils/status'
@@ -59,7 +59,6 @@ export const useTasksStore = defineStore('tasksStore', {
       if (this.initialised) {
         return
       }
-      const accountsStore = useAccountsStore()
 
       EventsOn('scan:log', (entry: LogEntry) => this.pushLog(entry))
       EventsOn('maintain:log', (entry: LogEntry) => this.pushLog(entry))
@@ -85,9 +84,6 @@ export const useTasksStore = defineStore('tasksStore', {
         }
         this.upsertProgressLog('maintain', payload, message)
       })
-      EventsOn('account:update', (update: AccountUpdate) => {
-        accountsStore.applyAccountUpdate(update)
-      })
 
       this.initialised = true
     },
@@ -99,7 +95,6 @@ export const useTasksStore = defineStore('tasksStore', {
       EventsOff('maintain:log')
       EventsOff('scan:progress')
       EventsOff('maintain:progress')
-      EventsOff('account:update')
       this.initialised = false
     },
     pushLog(entry: LogEntry) {

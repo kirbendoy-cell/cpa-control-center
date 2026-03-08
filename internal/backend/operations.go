@@ -63,16 +63,15 @@ func (b *Backend) ProbeAccount(name string) (AccountRecord, error) {
 		return AccountRecord{}, err
 	}
 
-	records, err := b.store.LoadCurrentMap()
+	record, ok, err := b.store.GetCurrentAccount(name)
 	if err != nil {
 		return AccountRecord{}, err
 	}
-	record, ok := records[name]
 	if !ok {
 		return AccountRecord{}, errors.New(msg(settings.Locale, "error.account_not_found", name))
 	}
 
-	probed := b.client.ProbeUsage(context.Background(), settings, record)
+	probed := b.client.ProbeUsage(context.Background(), settings, record, b.probeRetryLogger(settings.DetailedLogs, "scan", settings.Locale))
 	if err := b.store.UpsertCurrentAccount(probed); err != nil {
 		return AccountRecord{}, err
 	}
@@ -95,11 +94,10 @@ func (b *Backend) SetAccountDisabled(name string, disabled bool) (ActionResult, 
 		return result, errors.New(result.Error)
 	}
 
-	records, err := b.store.LoadCurrentMap()
+	record, ok, err := b.store.GetCurrentAccount(name)
 	if err != nil {
 		return result, err
 	}
-	record, ok := records[name]
 	if ok {
 		record.Disabled = disabled
 		record.LastAction = "manual_toggle"
@@ -130,11 +128,10 @@ func (b *Backend) DeleteAccount(name string) (ActionResult, error) {
 		return ActionResult{}, err
 	}
 
-	records, err := b.store.LoadCurrentMap()
+	record, _, err := b.store.GetCurrentAccount(name)
 	if err != nil {
 		return ActionResult{}, err
 	}
-	record := records[name]
 
 	result := b.client.DeleteAccount(context.Background(), settings, name)
 	if !result.OK {
@@ -270,9 +267,8 @@ func (b *Backend) runScan(ctx context.Context, kind string, settings AppSettings
 			previous = &currentCopy
 		}
 		record := b.client.BuildAccountRecord(item, previous, timestamp)
+		record = carryInventorySnapshot(record, previous)
 		if matchesInventoryFilter(record, settings) {
-			record.State = statePending
-			record.StateKey = statePending
 			candidateIndexes = append(candidateIndexes, len(records))
 			candidates = append(candidates, record)
 		}
@@ -365,7 +361,7 @@ func (b *Backend) runMaintain(ctx context.Context, settings AppSettings) (Mainta
 		if err != nil {
 			return result, err
 		}
-		applyDeleteResults(recordMap, result.Delete401Results, "delete_401", "deleted_401", b)
+		applyDeleteResults(recordMap, result.Delete401Results, "delete_401", "deleted_401")
 	}
 
 	deletedNames := successfulNames(result.Delete401Results)
@@ -387,7 +383,7 @@ func (b *Backend) runMaintain(ctx context.Context, settings AppSettings) (Mainta
 			if err != nil {
 				return result, err
 			}
-			applyDisableResults(recordMap, result.QuotaActionResults, "disable_quota", "quota_disabled", true, b)
+			applyDisableResults(recordMap, result.QuotaActionResults, "disable_quota", "quota_disabled", true)
 		}
 	case "delete":
 		var toDelete []string
@@ -405,7 +401,7 @@ func (b *Backend) runMaintain(ctx context.Context, settings AppSettings) (Mainta
 			if err != nil {
 				return result, err
 			}
-			applyDeleteResults(recordMap, result.QuotaActionResults, "delete_quota", "quota_deleted", b)
+			applyDeleteResults(recordMap, result.QuotaActionResults, "delete_quota", "quota_deleted")
 			deletedNames = append(deletedNames, successfulNames(result.QuotaActionResults)...)
 		}
 	}
@@ -426,7 +422,7 @@ func (b *Backend) runMaintain(ctx context.Context, settings AppSettings) (Mainta
 			if err != nil {
 				return result, err
 			}
-			applyDisableResults(recordMap, result.ReenableResults, "reenable_quota", "", false, b)
+			applyDisableResults(recordMap, result.ReenableResults, "reenable_quota", "", false)
 		}
 	}
 
@@ -473,7 +469,7 @@ func (b *Backend) probeAccounts(ctx context.Context, kind string, settings AppSe
 				return
 			}
 
-			probed := b.client.ProbeUsage(ctx, settings, record)
+			probed := b.client.ProbeUsage(ctx, settings, record, b.probeRetryLogger(settings.DetailedLogs, kind, settings.Locale))
 			if ctx.Err() != nil {
 				return
 			}
@@ -482,7 +478,6 @@ func (b *Backend) probeAccounts(ctx context.Context, kind string, settings AppSe
 			current := int(atomic.AddInt64(&completed, 1))
 			b.emitDetailedLog(settings.DetailedLogs, kind, probeLogLevel(probed), msg(settings.Locale, "task.scan.single_probe", probed.Name, stateLabel(settings.Locale, probed.StateKey)))
 			b.emitProgress(kind, "probe", current, len(records), msg(settings.Locale, "task.scan.probed_account", probed.Name), current == len(records))
-			b.emitAccountUpdate("scan", false, probed)
 		}(index, record)
 	}
 
@@ -565,6 +560,15 @@ func probeLogLevel(record AccountRecord) string {
 	}
 }
 
+func (b *Backend) probeRetryLogger(enabled bool, kind string, locale string) ProbeRetryObserver {
+	if !enabled {
+		return nil
+	}
+	return func(event ProbeRetryEvent) {
+		b.emitDetailedLog(true, kind, "warning", msg(locale, "task.scan.retry_probe", event.AccountName, event.RetryIndex, event.MaxRetries, event.ProbeErrorText))
+	}
+}
+
 func taskStatus(err error) string {
 	switch {
 	case err == nil:
@@ -576,7 +580,7 @@ func taskStatus(err error) string {
 	}
 }
 
-func applyDeleteResults(records map[string]AccountRecord, results []ActionResult, lastAction string, managedReason string, backend *Backend) {
+func applyDeleteResults(records map[string]AccountRecord, results []ActionResult, lastAction string, managedReason string) {
 	for _, result := range results {
 		record, ok := records[result.Name]
 		if !ok {
@@ -589,15 +593,13 @@ func applyDeleteResults(records map[string]AccountRecord, results []ActionResult
 		if result.OK {
 			record.ManagedReason = managedReason
 			delete(records, result.Name)
-			backend.emitAccountUpdate(lastAction, true, record)
 		} else {
 			records[result.Name] = record
-			backend.emitAccountUpdate(lastAction, false, record)
 		}
 	}
 }
 
-func applyDisableResults(records map[string]AccountRecord, results []ActionResult, lastAction string, managedReason string, disabled bool, backend *Backend) {
+func applyDisableResults(records map[string]AccountRecord, results []ActionResult, lastAction string, managedReason string, disabled bool) {
 	for _, result := range results {
 		record, ok := records[result.Name]
 		if !ok {
@@ -617,7 +619,6 @@ func applyDisableResults(records map[string]AccountRecord, results []ActionResul
 			}
 		}
 		records[result.Name] = record
-		backend.emitAccountUpdate(lastAction, false, record)
 	}
 }
 

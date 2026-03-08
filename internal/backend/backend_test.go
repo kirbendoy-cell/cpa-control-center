@@ -133,6 +133,22 @@ func TestBackendRunScanMaintainAndExport(t *testing.T) {
 		t.Fatalf("SaveSettings: %v", err)
 	}
 
+	syncResult, err := service.SyncInventory()
+	if err != nil {
+		t.Fatalf("SyncInventory: %v", err)
+	}
+	if syncResult.TotalAccounts != 3 || syncResult.FilteredAccounts != 3 {
+		t.Fatalf("unexpected sync result: %+v", syncResult)
+	}
+
+	initialSnapshot, err := service.GetDashboardSnapshot()
+	if err != nil {
+		t.Fatalf("GetDashboardSnapshot before scan: %v", err)
+	}
+	if initialSnapshot.Summary.FilteredAccounts != 3 || initialSnapshot.Summary.PendingCount != 3 || initialSnapshot.Summary.LastScanAt != "" || len(initialSnapshot.History) != 0 {
+		t.Fatalf("unexpected initial dashboard snapshot: %+v", initialSnapshot)
+	}
+
 	summary, err := service.RunScan()
 	if err != nil {
 		t.Fatalf("RunScan: %v", err)
@@ -145,7 +161,7 @@ func TestBackendRunScanMaintainAndExport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetDashboardSnapshot: %v", err)
 	}
-	if snapshot.Summary.FilteredAccounts != 3 || len(snapshot.Accounts) != 3 || len(snapshot.History) != 1 {
+	if snapshot.Summary.FilteredAccounts != 3 || snapshot.Summary.PendingCount != 0 || len(snapshot.History) != 1 {
 		t.Fatalf("unexpected dashboard snapshot: %+v", snapshot)
 	}
 
@@ -226,5 +242,129 @@ func TestBackendRunScanMaintainAndExport(t *testing.T) {
 	}
 	if len(serverState.reenabled) != 1 || serverState.reenabled[0] != "recovered-codex.json" {
 		t.Fatalf("unexpected reenabled names: %+v", serverState.reenabled)
+	}
+}
+
+func TestInventorySyncAndScanPreservePendingOutsideCurrentFilter(t *testing.T) {
+	serverState := &fakeCPAServer{
+		files: []map[string]any{
+			{
+				"name":       "codex-one.json",
+				"type":       "codex",
+				"provider":   "codex",
+				"auth_index": "healthy",
+				"id_token":   `{"chatgpt_account_id":"acct-codex","plan_type":"pro"}`,
+			},
+			{
+				"name":       "codex-two.json",
+				"type":       "codex",
+				"provider":   "openai",
+				"auth_index": "healthy",
+				"id_token":   `{"chatgpt_account_id":"acct-openai","plan_type":"free"}`,
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(serverState.handler))
+	defer server.Close()
+
+	dataDir := t.TempDir()
+	service, err := New(dataDir, nil)
+	if err != nil {
+		t.Fatalf("New backend: %v", err)
+	}
+	defer service.Close()
+
+	_, err = service.SaveSettings(AppSettings{
+		BaseURL:         server.URL,
+		ManagementToken: "token",
+		Locale:          localeEnglish,
+		TargetType:      "codex",
+		Provider:        "codex",
+		ProbeWorkers:    2,
+		ActionWorkers:   1,
+		TimeoutSeconds:  5,
+		Retries:         0,
+		UserAgent:       defaultUserAgent,
+		QuotaAction:     "disable",
+		ExportDirectory: filepath.Join(dataDir, "exports"),
+	})
+	if err != nil {
+		t.Fatalf("SaveSettings: %v", err)
+	}
+
+	if _, err := service.SyncInventory(); err != nil {
+		t.Fatalf("SyncInventory: %v", err)
+	}
+
+	if _, err := service.SaveSettings(AppSettings{
+		BaseURL:         server.URL,
+		ManagementToken: "token",
+		Locale:          localeEnglish,
+		TargetType:      "",
+		Provider:        "",
+		ProbeWorkers:    2,
+		ActionWorkers:   1,
+		TimeoutSeconds:  5,
+		Retries:         0,
+		UserAgent:       defaultUserAgent,
+		QuotaAction:     "disable",
+		ExportDirectory: filepath.Join(dataDir, "exports"),
+	}); err != nil {
+		t.Fatalf("SaveSettings widen filter after sync: %v", err)
+	}
+
+	snapshotAfterSync, err := service.GetDashboardSnapshot()
+	if err != nil {
+		t.Fatalf("GetDashboardSnapshot after sync: %v", err)
+	}
+	if snapshotAfterSync.Summary.FilteredAccounts != 2 || snapshotAfterSync.Summary.PendingCount != 2 {
+		t.Fatalf("unexpected snapshot after sync widen: %+v", snapshotAfterSync.Summary)
+	}
+
+	if _, err := service.SaveSettings(AppSettings{
+		BaseURL:         server.URL,
+		ManagementToken: "token",
+		Locale:          localeEnglish,
+		TargetType:      "codex",
+		Provider:        "codex",
+		ProbeWorkers:    2,
+		ActionWorkers:   1,
+		TimeoutSeconds:  5,
+		Retries:         0,
+		UserAgent:       defaultUserAgent,
+		QuotaAction:     "disable",
+		ExportDirectory: filepath.Join(dataDir, "exports"),
+	}); err != nil {
+		t.Fatalf("SaveSettings narrow filter before scan: %v", err)
+	}
+
+	if _, err := service.RunScan(); err != nil {
+		t.Fatalf("RunScan: %v", err)
+	}
+
+	if _, err := service.SaveSettings(AppSettings{
+		BaseURL:         server.URL,
+		ManagementToken: "token",
+		Locale:          localeEnglish,
+		TargetType:      "",
+		Provider:        "",
+		ProbeWorkers:    2,
+		ActionWorkers:   1,
+		TimeoutSeconds:  5,
+		Retries:         0,
+		UserAgent:       defaultUserAgent,
+		QuotaAction:     "disable",
+		ExportDirectory: filepath.Join(dataDir, "exports"),
+	}); err != nil {
+		t.Fatalf("SaveSettings widen filter after scan: %v", err)
+	}
+
+	snapshotAfterScan, err := service.GetDashboardSnapshot()
+	if err != nil {
+		t.Fatalf("GetDashboardSnapshot after scan: %v", err)
+	}
+	if snapshotAfterScan.Summary.FilteredAccounts != 2 || snapshotAfterScan.Summary.NormalCount != 1 || snapshotAfterScan.Summary.PendingCount != 1 {
+		t.Fatalf("unexpected snapshot after scan widen: %+v", snapshotAfterScan.Summary)
 	}
 }

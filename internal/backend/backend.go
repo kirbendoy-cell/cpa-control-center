@@ -86,19 +86,76 @@ func (b *Backend) TestConnection(input AppSettings) (ConnectionResult, error) {
 	return result, nil
 }
 
+func (b *Backend) SyncInventory() (InventorySyncResult, error) {
+	settings, err := b.store.LoadSettings()
+	if err != nil {
+		return InventorySyncResult{}, err
+	}
+	if err := ensureConfigured(settings); err != nil {
+		return InventorySyncResult{}, err
+	}
+
+	files, err := b.client.FetchAuthFiles(context.Background(), settings)
+	if err != nil {
+		return InventorySyncResult{}, err
+	}
+
+	existing, err := b.store.LoadCurrentMap()
+	if err != nil {
+		return InventorySyncResult{}, err
+	}
+
+	timestamp := nowISO()
+	records := make([]AccountRecord, 0, len(files))
+	filteredCount := 0
+	for _, item := range files {
+		name := stringValue(item["name"])
+		if name == "" {
+			continue
+		}
+		var previous *AccountRecord
+		if current, ok := existing[name]; ok {
+			currentCopy := current
+			previous = &currentCopy
+		}
+		record := b.client.BuildAccountRecord(item, previous, timestamp)
+		record = carryInventorySnapshot(record, previous)
+		if matchesInventoryFilter(record, settings) {
+			filteredCount++
+		}
+		records = append(records, record)
+	}
+
+	if err := b.store.ReplaceCurrentAccounts(records); err != nil {
+		return InventorySyncResult{}, err
+	}
+
+	result := InventorySyncResult{
+		TotalAccounts:    len(records),
+		FilteredAccounts: filteredCount,
+		SyncedAt:         timestamp,
+	}
+	b.emitLog("scan", "info", msg(settings.Locale, "task.inventory.synced", filteredCount, len(records)))
+	return result, nil
+}
+
 func (b *Backend) GetDashboardSummary() (DashboardSummary, error) {
 	settings, err := b.store.LoadSettings()
 	if err != nil {
 		return DashboardSummary{}, err
 	}
-	allRecords, err := b.store.ListAccounts(AccountFilter{})
+	summary, err := b.store.SummarizeAccounts(AccountFilter{
+		Type:     settings.TargetType,
+		Provider: settings.Provider,
+	})
 	if err != nil {
 		return DashboardSummary{}, err
 	}
-
-	filteredRecords := filterAccountsBySettings(allRecords, settings)
-	summary := computeSummary(filteredRecords)
-	summary.TotalAccounts = len(allRecords)
+	totalAccounts, err := b.store.CountAccounts(AccountFilter{})
+	if err != nil {
+		return DashboardSummary{}, err
+	}
+	summary.TotalAccounts = totalAccounts
 	return summary, nil
 }
 
@@ -108,23 +165,30 @@ func (b *Backend) GetDashboardSnapshot() (DashboardSnapshot, error) {
 		return DashboardSnapshot{}, err
 	}
 
-	allRecords, err := b.store.ListAccounts(AccountFilter{})
+	summary, err := b.store.SummarizeAccounts(AccountFilter{
+		Type:     settings.TargetType,
+		Provider: settings.Provider,
+	})
 	if err != nil {
 		return DashboardSnapshot{}, err
 	}
-	filteredRecords := filterAccountsBySettings(allRecords, settings)
-	summary := computeSummary(filteredRecords)
-	summary.TotalAccounts = len(allRecords)
+	totalAccounts, err := b.store.CountAccounts(AccountFilter{})
+	if err != nil {
+		return DashboardSnapshot{}, err
+	}
+	summary.TotalAccounts = totalAccounts
 
 	history, err := b.store.ListScanHistory(12)
 	if err != nil {
 		return DashboardSnapshot{}, err
 	}
+	if history == nil {
+		history = make([]ScanSummary, 0)
+	}
 
 	return DashboardSnapshot{
-		Summary:  summary,
-		Accounts: filteredRecords,
-		History:  history,
+		Summary: summary,
+		History: history,
 	}, nil
 }
 
@@ -140,6 +204,20 @@ func (b *Backend) ListAccounts(filter AccountFilter) ([]AccountRecord, error) {
 		filter.Provider = settings.Provider
 	}
 	return b.store.ListAccounts(filter)
+}
+
+func (b *Backend) ListAccountsPage(filter AccountFilter, page int, pageSize int) (AccountPage, error) {
+	settings, err := b.store.LoadSettings()
+	if err != nil {
+		return AccountPage{}, err
+	}
+	if filter.Type == "" {
+		filter.Type = settings.TargetType
+	}
+	if filter.Provider == "" {
+		filter.Provider = settings.Provider
+	}
+	return b.store.ListAccountsPage(filter, page, pageSize)
 }
 
 func (b *Backend) CancelScan() (bool, error) {

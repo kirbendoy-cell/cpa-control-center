@@ -84,6 +84,7 @@ export interface AccountRecord {
 export interface DashboardSummary {
   totalAccounts: number
   filteredAccounts: number
+  pendingCount: number
   normalCount: number
   invalid401Count: number
   quotaLimitedCount: number
@@ -94,8 +95,21 @@ export interface DashboardSummary {
 
 export interface DashboardSnapshot {
   summary: DashboardSummary
-  accounts: AccountRecord[]
   history: ScanSummary[]
+}
+
+export interface AccountPage {
+  records: AccountRecord[]
+  totalRecords: number
+  page: number
+  pageSize: number
+  providerOptions: string[]
+}
+
+export interface InventorySyncResult {
+  totalAccounts: number
+  filteredAccounts: number
+  syncedAt: string
 }
 
 export interface MaintainOptions {

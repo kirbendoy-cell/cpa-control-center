@@ -205,6 +205,70 @@ func TestClientProbeRetriesTransientUpstreamStatus(t *testing.T) {
 	}
 }
 
+func TestClientProbeRetriesTransientForbidden(t *testing.T) {
+	t.Parallel()
+
+	var hits int32
+	var retryEvents []ProbeRetryEvent
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v0/management/api-call":
+			if atomic.AddInt32(&hits, 1) == 1 {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"status_code": 403,
+					"body":        `{"error":"temporary forbidden"}`,
+				})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status_code": 200,
+				"body":        `{"plan_type":"pro","rate_limit":{"allowed":true,"limit_reached":false}}`,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient()
+	client.retryDelay = 0
+	settings := AppSettings{
+		BaseURL:         server.URL,
+		ManagementToken: "token",
+		Locale:          localeEnglish,
+		TimeoutSeconds:  5,
+		Retries:         1,
+		UserAgent:       defaultUserAgent,
+	}
+
+	record := AccountRecord{
+		Name:             "retry-403.json",
+		AuthIndex:        "retry-403",
+		Type:             "codex",
+		Provider:         "codex",
+		ChatGPTAccountID: "acct-retry-403",
+	}
+
+	probed := client.ProbeUsage(context.Background(), settings, record, func(event ProbeRetryEvent) {
+		retryEvents = append(retryEvents, event)
+	})
+	if probed.StateKey != stateNormal {
+		t.Fatalf("expected normal state after retry, got %+v", probed)
+	}
+	if atomic.LoadInt32(&hits) != 2 {
+		t.Fatalf("expected 2 probe attempts, got %d", hits)
+	}
+	if len(retryEvents) != 1 {
+		t.Fatalf("expected 1 retry event, got %d", len(retryEvents))
+	}
+	if retryEvents[0].RetryIndex != 1 || retryEvents[0].MaxRetries != 1 {
+		t.Fatalf("unexpected retry event: %+v", retryEvents[0])
+	}
+	if retryEvents[0].StatusCode != http.StatusForbidden || retryEvents[0].ProbeErrorKind != "unexpected_status" {
+		t.Fatalf("unexpected retry reason: %+v", retryEvents[0])
+	}
+}
+
 func TestClientProbeDoesNotRetryInvalid401(t *testing.T) {
 	t.Parallel()
 

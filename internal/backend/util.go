@@ -269,6 +269,8 @@ func computeSummary(records []AccountRecord) DashboardSummary {
 
 	for _, record := range records {
 		switch normalizeStateKey(record.StateKey) {
+		case statePending:
+			summary.PendingCount++
 		case stateNormal:
 			summary.NormalCount++
 		case stateInvalid401:
@@ -295,4 +297,43 @@ func sanitizeRecord(record AccountRecord) AccountRecord {
 		record.Status = record.StateKey
 	}
 	return record
+}
+
+func carryProbeSnapshot(record AccountRecord, previous AccountRecord) AccountRecord {
+	record.State = previous.State
+	record.StateKey = previous.StateKey
+	record.Status = previous.Status
+	record.StatusMessage = stringOr(record.StatusMessage, previous.StatusMessage)
+	record.Allowed = previous.Allowed
+	record.LimitReached = previous.LimitReached
+	record.Invalid401 = previous.Invalid401
+	record.QuotaLimited = previous.QuotaLimited
+	record.Recovered = previous.Recovered
+	record.Error = previous.Error
+	record.APIHTTPStatus = previous.APIHTTPStatus
+	record.APIStatusCode = previous.APIStatusCode
+	record.ProbeErrorKind = previous.ProbeErrorKind
+	record.ProbeErrorText = stringOr(previous.ProbeErrorText, record.ProbeErrorText)
+	record.LastProbedAt = previous.LastProbedAt
+	if record.PlanType == "" {
+		record.PlanType = previous.PlanType
+	}
+	if record.Email == "" {
+		record.Email = previous.Email
+	}
+	return sanitizeRecord(record)
+}
+
+func carryInventorySnapshot(record AccountRecord, previous *AccountRecord) AccountRecord {
+	if previous == nil {
+		record.State = statePending
+		record.StateKey = statePending
+		return sanitizeRecord(record)
+	}
+	if previous.LastProbedAt != "" {
+		return carryProbeSnapshot(record, *previous)
+	}
+	record.State = statePending
+	record.StateKey = statePending
+	return sanitizeRecord(record)
 }

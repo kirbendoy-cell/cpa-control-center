@@ -46,15 +46,38 @@ func TestStoreSettingsAndHistory(t *testing.T) {
 		t.Fatalf("expected detailed logs to persist")
 	}
 
-	record := AccountRecord{
-		Name:      "codex-1.json",
-		Type:      "codex",
-		Provider:  "codex",
-		State:     stateNormal,
-		StateKey:  stateNormal,
-		UpdatedAt: nowISO(),
+	records := []AccountRecord{
+		{
+			Name:      "codex-1.json",
+			Type:      "codex",
+			Provider:  "codex",
+			Email:     "one@example.com",
+			State:     stateNormal,
+			StateKey:  stateNormal,
+			UpdatedAt: nowISO(),
+		},
+		{
+			Name:           "codex-2.json",
+			Type:           "codex",
+			Provider:       "codex",
+			Email:          "two@example.com",
+			PlanType:       "free",
+			ProbeErrorText: "timeout",
+			State:          stateError,
+			StateKey:       stateError,
+			UpdatedAt:      nowISO(),
+		},
+		{
+			Name:      "other-1.json",
+			Type:      "chatgpt",
+			Provider:  "other",
+			Email:     "other@example.com",
+			State:     statePending,
+			StateKey:  statePending,
+			UpdatedAt: nowISO(),
+		},
 	}
-	if err := store.ReplaceCurrentAccounts([]AccountRecord{record}); err != nil {
+	if err := store.ReplaceCurrentAccounts(records); err != nil {
 		t.Fatalf("ReplaceCurrentAccounts: %v", err)
 	}
 
@@ -62,8 +85,24 @@ func TestStoreSettingsAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAccounts: %v", err)
 	}
-	if len(items) != 1 || items[0].Name != record.Name {
+	if len(items) != 2 || items[0].Name != "codex-2.json" || items[1].Name != "codex-1.json" {
 		t.Fatalf("unexpected accounts: %+v", items)
+	}
+
+	page, err := store.ListAccountsPage(AccountFilter{Type: "codex", Query: "example"}, 1, 1)
+	if err != nil {
+		t.Fatalf("ListAccountsPage: %v", err)
+	}
+	if page.TotalRecords != 2 || len(page.Records) != 1 || len(page.ProviderOptions) != 1 || page.ProviderOptions[0] != "codex" {
+		t.Fatalf("unexpected account page: %+v", page)
+	}
+
+	summarySnapshot, err := store.SummarizeAccounts(AccountFilter{Type: "codex"})
+	if err != nil {
+		t.Fatalf("SummarizeAccounts: %v", err)
+	}
+	if summarySnapshot.FilteredAccounts != 2 || summarySnapshot.NormalCount != 1 || summarySnapshot.ErrorCount != 1 || summarySnapshot.PendingCount != 0 {
+		t.Fatalf("unexpected account summary: %+v", summarySnapshot)
 	}
 
 	runID, err := store.StartScanRun(loaded)
@@ -96,7 +135,7 @@ func TestStoreSettingsAndHistory(t *testing.T) {
 	if err := store.FinishScanRun(summary); err != nil {
 		t.Fatalf("FinishScanRun: %v", err)
 	}
-	if err := store.SaveScanRecords(runID, []AccountRecord{record}); err != nil {
+	if err := store.SaveScanRecords(runID, []AccountRecord{records[0]}); err != nil {
 		t.Fatalf("SaveScanRecords: %v", err)
 	}
 
@@ -112,7 +151,7 @@ func TestStoreSettingsAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetScanDetails: %v", err)
 	}
-	if len(detail.Records) != 1 || detail.Records[0].Name != record.Name {
+	if len(detail.Records) != 1 || detail.Records[0].Name != records[0].Name {
 		t.Fatalf("unexpected detail: %+v", detail)
 	}
 
@@ -120,7 +159,7 @@ func TestStoreSettingsAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetScanDetailsPage: %v", err)
 	}
-	if paged.TotalRecords != 1 || len(paged.Records) != 1 || paged.Records[0].Name != record.Name {
+	if paged.TotalRecords != 1 || len(paged.Records) != 1 || paged.Records[0].Name != records[0].Name {
 		t.Fatalf("unexpected paged detail: %+v", paged)
 	}
 }

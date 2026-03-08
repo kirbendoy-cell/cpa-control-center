@@ -83,6 +83,14 @@ func (a *App) TestConnection(input backend.AppSettings) (backend.ConnectionResul
 	return service.TestConnection(input)
 }
 
+func (a *App) SyncInventory() (backend.InventorySyncResult, error) {
+	service, err := a.ensureBackend()
+	if err != nil {
+		return backend.InventorySyncResult{}, err
+	}
+	return service.SyncInventory()
+}
+
 func (a *App) GetDashboardSummary() (backend.DashboardSummary, error) {
 	service, err := a.ensureBackend()
 	if err != nil {
@@ -105,6 +113,14 @@ func (a *App) ListAccounts(filter backend.AccountFilter) ([]backend.AccountRecor
 		return nil, err
 	}
 	return service.ListAccounts(filter)
+}
+
+func (a *App) ListAccountsPage(filter backend.AccountFilter, page int, pageSize int) (backend.AccountPage, error) {
+	service, err := a.ensureBackend()
+	if err != nil {
+		return backend.AccountPage{}, err
+	}
+	return service.ListAccountsPage(filter, page, pageSize)
 }
 
 func (a *App) RunScan() (backend.ScanSummary, error) {

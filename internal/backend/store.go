@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -61,6 +62,9 @@ CREATE TABLE IF NOT EXISTS accounts_current (
 	provider TEXT NOT NULL,
 	account_type TEXT NOT NULL,
 	state_key TEXT NOT NULL,
+	email TEXT NOT NULL DEFAULT '',
+	plan_type TEXT NOT NULL DEFAULT '',
+	probe_error_text TEXT NOT NULL DEFAULT '',
 	disabled INTEGER NOT NULL,
 	unavailable INTEGER NOT NULL,
 	updated_at TEXT NOT NULL,
@@ -104,7 +108,55 @@ CREATE TABLE IF NOT EXISTS scan_records (
 );
 `
 
-	_, err := s.db.Exec(schema)
+	if _, err := s.db.Exec(schema); err != nil {
+		return err
+	}
+
+	for _, migration := range []struct {
+		table      string
+		column     string
+		definition string
+	}{
+		{table: "accounts_current", column: "email", definition: "TEXT NOT NULL DEFAULT ''"},
+		{table: "accounts_current", column: "plan_type", definition: "TEXT NOT NULL DEFAULT ''"},
+		{table: "accounts_current", column: "probe_error_text", definition: "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := s.ensureColumn(migration.table, migration.column, migration.definition); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *Store) ensureColumn(table string, column string, definition string) error {
+	rows, err := s.db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			columnType string
+			notNull    int
+			defaultVal any
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultVal, &primaryKey); err != nil {
+			return err
+		}
+		if strings.EqualFold(name, column) {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	_, err = s.db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, definition))
 	return err
 }
 
@@ -168,13 +220,14 @@ func (s *Store) LoadCurrentMap() (map[string]AccountRecord, error) {
 }
 
 func (s *Store) ListAccounts(filter AccountFilter) ([]AccountRecord, error) {
-	rows, err := s.db.Query(`SELECT data_json FROM accounts_current`)
+	query, args := currentAccountsSelectQuery(filter)
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var records []AccountRecord
+	records := make([]AccountRecord, 0)
 	for rows.Next() {
 		var data string
 		if err := rows.Scan(&data); err != nil {
@@ -184,17 +237,144 @@ func (s *Store) ListAccounts(filter AccountFilter) ([]AccountRecord, error) {
 		if err != nil {
 			return nil, err
 		}
-		if matchesAccountFilter(record, filter) {
-			records = append(records, record)
-		}
+		records = append(records, record)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-
-	sortAccounts(records)
 	return records, nil
+}
+
+func (s *Store) ListAccountsPage(filter AccountFilter, page int, pageSize int) (AccountPage, error) {
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+
+	result := AccountPage{
+		Page:            page,
+		PageSize:        pageSize,
+		Records:         make([]AccountRecord, 0),
+		ProviderOptions: make([]string, 0),
+	}
+
+	whereClause, whereArgs := currentAccountsWhereClause(filter)
+	countQuery := `SELECT COUNT(1) FROM accounts_current` + whereClause
+	if err := s.db.QueryRow(countQuery, whereArgs...).Scan(&result.TotalRecords); err != nil {
+		return result, err
+	}
+	maxPage := 1
+	if result.TotalRecords > 0 {
+		maxPage = (result.TotalRecords + pageSize - 1) / pageSize
+	}
+	if page > maxPage {
+		page = maxPage
+		result.Page = page
+	}
+
+	queryArgs := append([]any{}, whereArgs...)
+	queryArgs = append(queryArgs, pageSize, (page-1)*pageSize)
+	rows, err := s.db.Query(
+		`SELECT data_json
+		   FROM accounts_current`+whereClause+`
+		  ORDER BY `+currentAccountsOrderByClause()+`
+		  LIMIT ? OFFSET ?`,
+		queryArgs...,
+	)
+	if err != nil {
+		return result, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var data string
+		if err := rows.Scan(&data); err != nil {
+			return result, err
+		}
+		record, err := parseRecord(data)
+		if err != nil {
+			return result, err
+		}
+		result.Records = append(result.Records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return result, err
+	}
+
+	providerOptions, err := s.listProviderOptions(filter)
+	if err != nil {
+		return result, err
+	}
+	result.ProviderOptions = providerOptions
+
+	return result, nil
+}
+
+func (s *Store) SummarizeAccounts(filter AccountFilter) (DashboardSummary, error) {
+	whereClause, whereArgs := currentAccountsWhereClause(filter)
+	query := `SELECT
+		COUNT(1),
+		COALESCE(MAX(last_probed_at), ''),
+		COALESCE(SUM(CASE WHEN state_key = ? THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN state_key = ? THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN state_key = ? THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN state_key = ? THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN state_key = ? THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN state_key = ? THEN 1 ELSE 0 END), 0)
+	FROM accounts_current` + whereClause
+
+	args := []any{
+		statePending,
+		stateNormal,
+		stateInvalid401,
+		stateQuotaLimited,
+		stateRecovered,
+		stateError,
+	}
+	args = append(args, whereArgs...)
+
+	var summary DashboardSummary
+	if err := s.db.QueryRow(query, args...).Scan(
+		&summary.FilteredAccounts,
+		&summary.LastScanAt,
+		&summary.PendingCount,
+		&summary.NormalCount,
+		&summary.Invalid401Count,
+		&summary.QuotaLimitedCount,
+		&summary.RecoveredCount,
+		&summary.ErrorCount,
+	); err != nil {
+		return summary, err
+	}
+	return summary, nil
+}
+
+func (s *Store) CountAccounts(filter AccountFilter) (int, error) {
+	whereClause, args := currentAccountsWhereClause(filter)
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(1) FROM accounts_current`+whereClause, args...).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+func (s *Store) GetCurrentAccount(name string) (AccountRecord, bool, error) {
+	var data string
+	err := s.db.QueryRow(`SELECT data_json FROM accounts_current WHERE name = ?`, name).Scan(&data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AccountRecord{}, false, nil
+	}
+	if err != nil {
+		return AccountRecord{}, false, err
+	}
+	record, err := parseRecord(data)
+	if err != nil {
+		return AccountRecord{}, false, err
+	}
+	return record, true, nil
 }
 
 func (s *Store) ReplaceCurrentAccounts(records []AccountRecord) error {
@@ -243,12 +423,15 @@ func upsertCurrentAccountTx(tx *sql.Tx, record AccountRecord) error {
 
 	_, err = tx.Exec(
 		`INSERT INTO accounts_current (
-			name, provider, account_type, state_key, disabled, unavailable, updated_at, last_probed_at, managed_reason, data_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			name, provider, account_type, state_key, email, plan_type, probe_error_text, disabled, unavailable, updated_at, last_probed_at, managed_reason, data_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(name) DO UPDATE SET
 			provider = excluded.provider,
 			account_type = excluded.account_type,
 			state_key = excluded.state_key,
+			email = excluded.email,
+			plan_type = excluded.plan_type,
+			probe_error_text = excluded.probe_error_text,
 			disabled = excluded.disabled,
 			unavailable = excluded.unavailable,
 			updated_at = excluded.updated_at,
@@ -259,6 +442,9 @@ func upsertCurrentAccountTx(tx *sql.Tx, record AccountRecord) error {
 		record.Provider,
 		record.Type,
 		record.StateKey,
+		record.Email,
+		record.PlanType,
+		record.ProbeErrorText,
 		boolToInt(record.Disabled),
 		boolToInt(record.Unavailable),
 		record.UpdatedAt,
@@ -432,7 +618,7 @@ func (s *Store) ListScanHistory(limit int) ([]ScanSummary, error) {
 	}
 	defer rows.Close()
 
-	var items []ScanSummary
+	items := make([]ScanSummary, 0)
 	for rows.Next() {
 		var item ScanSummary
 		var delete401 int
@@ -470,7 +656,9 @@ func (s *Store) ListScanHistory(limit int) ([]ScanSummary, error) {
 }
 
 func (s *Store) GetScanDetails(runID int64) (ScanDetail, error) {
-	var detail ScanDetail
+	detail := ScanDetail{
+		Records: make([]AccountRecord, 0),
+	}
 	summary, err := s.scanSummaryByRunID(runID)
 	if err != nil {
 		return detail, err
@@ -506,9 +694,11 @@ func (s *Store) GetScanDetailsPage(runID int64, page int, pageSize int) (ScanDet
 		pageSize = 20
 	}
 
-	var detail ScanDetailPage
-	detail.Page = page
-	detail.PageSize = pageSize
+	detail := ScanDetailPage{
+		Page:     page,
+		PageSize: pageSize,
+		Records:  make([]AccountRecord, 0),
+	}
 
 	summary, err := s.scanSummaryByRunID(runID)
 	if err != nil {
@@ -602,6 +792,81 @@ func filepathJoin(parts ...string) string {
 		path = fmt.Sprintf("%s%c%s", path, os.PathSeparator, part)
 	}
 	return path
+}
+
+func currentAccountsSelectQuery(filter AccountFilter) (string, []any) {
+	whereClause, args := currentAccountsWhereClause(filter)
+	return `SELECT data_json FROM accounts_current` + whereClause + ` ORDER BY ` + currentAccountsOrderByClause(), args
+}
+
+func currentAccountsWhereClause(filter AccountFilter) (string, []any) {
+	var conditions []string
+	var args []any
+
+	if trimmed := strings.TrimSpace(filter.Type); trimmed != "" {
+		conditions = append(conditions, `LOWER(account_type) = ?`)
+		args = append(args, strings.ToLower(trimmed))
+	}
+	if trimmed := strings.TrimSpace(filter.Provider); trimmed != "" {
+		conditions = append(conditions, `LOWER(provider) = ?`)
+		args = append(args, strings.ToLower(trimmed))
+	}
+	if trimmed := strings.TrimSpace(filter.State); trimmed != "" {
+		conditions = append(conditions, `state_key = ?`)
+		args = append(args, normalizeStateKey(trimmed))
+	}
+	if trimmed := strings.ToLower(strings.TrimSpace(filter.Query)); trimmed != "" {
+		pattern := "%" + trimmed + "%"
+		conditions = append(conditions, `(LOWER(name) LIKE ? OR LOWER(email) LIKE ? OR LOWER(provider) LIKE ? OR LOWER(plan_type) LIKE ? OR LOWER(probe_error_text) LIKE ?)`)
+		args = append(args, pattern, pattern, pattern, pattern, pattern)
+	}
+
+	if len(conditions) == 0 {
+		return "", args
+	}
+	return ` WHERE ` + strings.Join(conditions, ` AND `), args
+}
+
+func currentAccountsOrderByClause() string {
+	return `CASE state_key
+		WHEN 'invalid_401' THEN 0
+		WHEN 'quota_limited' THEN 1
+		WHEN 'error' THEN 2
+		WHEN 'recovered' THEN 3
+		WHEN 'normal' THEN 4
+		WHEN 'pending' THEN 5
+		WHEN 'untracked' THEN 6
+		ELSE 7
+	END, LOWER(name) ASC`
+}
+
+func (s *Store) listProviderOptions(filter AccountFilter) ([]string, error) {
+	providerFilter := filter
+	providerFilter.Provider = ""
+
+	whereClause, args := currentAccountsWhereClause(providerFilter)
+	rows, err := s.db.Query(
+		`SELECT DISTINCT provider
+		   FROM accounts_current`+whereClause+`
+		  ORDER BY LOWER(provider) ASC`,
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var options []string
+	for rows.Next() {
+		var provider string
+		if err := rows.Scan(&provider); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(provider) != "" {
+			options = append(options, provider)
+		}
+	}
+	return options, rows.Err()
 }
 
 func boolToInt(value bool) int {

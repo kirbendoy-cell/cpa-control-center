@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { GetSettings, SaveSettings, TestConnection } from '../../wailsjs/go/main/App'
+import { GetSettings, SaveSettings, SyncInventory, TestConnection } from '../../wailsjs/go/main/App'
 import { i18n, setI18nLocale } from '@/i18n'
 import type { AppSettings, ConnectionResult } from '@/types'
 import { createDefaultSettings, validateSettings } from '@/utils/settings'
@@ -86,6 +86,7 @@ export const useSettingsStore = defineStore('settingsStore', {
       try {
         const connection = await this.testConnection()
         await this.saveSettings()
+        await SyncInventory()
         this.connection = connection
         return connection
       } catch (error) {

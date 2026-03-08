@@ -18,6 +18,17 @@ type Client struct {
 	retryDelay time.Duration
 }
 
+type ProbeRetryEvent struct {
+	AccountName    string
+	RetryIndex     int
+	MaxRetries     int
+	ProbeErrorKind string
+	ProbeErrorText string
+	StatusCode     int
+}
+
+type ProbeRetryObserver func(ProbeRetryEvent)
+
 func NewClient() *Client {
 	return &Client{
 		httpClient: &http.Client{},
@@ -111,7 +122,7 @@ func (c *Client) BuildAccountRecord(item map[string]any, previous *AccountRecord
 	return record
 }
 
-func (c *Client) ProbeUsage(ctx context.Context, settings AppSettings, record AccountRecord) AccountRecord {
+func (c *Client) ProbeUsage(ctx context.Context, settings AppSettings, record AccountRecord, retryObservers ...ProbeRetryObserver) AccountRecord {
 	if strings.TrimSpace(record.ChatGPTAccountID) == "" {
 		record = resetProbeState(record)
 		record.ProbeErrorKind = "missing_chatgpt_account_id"
@@ -124,11 +135,26 @@ func (c *Client) ProbeUsage(ctx context.Context, settings AppSettings, record Ac
 		attempts = 1
 	}
 
+	var onRetry ProbeRetryObserver
+	if len(retryObservers) > 0 {
+		onRetry = retryObservers[0]
+	}
+
 	var probed AccountRecord
 	for attempt := 1; attempt <= attempts; attempt++ {
 		probed = c.probeUsageOnce(ctx, settings, record)
 		if !shouldRetryProbeResult(probed) || attempt == attempts || ctx.Err() != nil {
 			return probed
+		}
+		if onRetry != nil {
+			onRetry(ProbeRetryEvent{
+				AccountName:    record.Name,
+				RetryIndex:     attempt,
+				MaxRetries:     attempts - 1,
+				ProbeErrorKind: probed.ProbeErrorKind,
+				ProbeErrorText: probed.ProbeErrorText,
+				StatusCode:     intValue(probed.APIStatusCode),
+			})
 		}
 		if err := waitForRetry(ctx, c.retryDelay*time.Duration(attempt)); err != nil {
 			return probed
@@ -232,7 +258,7 @@ func shouldRetryProbeResult(record AccountRecord) bool {
 	case "management_api", "missing_status_code", "body_invalid_json":
 		return true
 	case "unexpected_status":
-		return retryableHTTPStatus(intValue(record.APIStatusCode))
+		return retryableProbeStatus(intValue(record.APIStatusCode))
 	default:
 		return false
 	}
@@ -369,6 +395,10 @@ func retryableHTTPStatus(statusCode int) bool {
 	return statusCode == http.StatusRequestTimeout ||
 		statusCode == http.StatusTooManyRequests ||
 		statusCode >= http.StatusInternalServerError
+}
+
+func retryableProbeStatus(statusCode int) bool {
+	return statusCode == http.StatusForbidden || retryableHTTPStatus(statusCode)
 }
 
 func waitForRetry(ctx context.Context, delay time.Duration) error {

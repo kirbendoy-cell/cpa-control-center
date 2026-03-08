@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 import {
   ElButton,
   ElInput,
@@ -16,60 +16,24 @@ import StatusPill from '@/components/StatusPill.vue'
 import { useAccountsStore } from '@/stores/accounts'
 import { useTasksStore } from '@/stores/tasks'
 import { formatDateTime } from '@/utils/format'
-import { stateDescription, stateOrder, normalizeStateKey } from '@/utils/status'
+import { stateDescription, stateOrder } from '@/utils/status'
 import { toErrorMessage } from '@/utils/errors'
 
 const { t } = useI18n()
 const accountsStore = useAccountsStore()
 const tasksStore = useTasksStore()
 
-const query = ref('')
-const stateFilter = ref('')
-const providerFilter = ref('')
-const currentPage = ref(1)
-const pageSize = ref(20)
 const pageSizeOptions = [20, 50, 100, 200]
 
-const providerOptions = computed(() => [...new Set(accountsStore.accounts.map((item) => item.provider).filter(Boolean))])
+const providerOptions = computed(() => accountsStore.providerOptions)
 const stateOptions = computed(() => stateOrder.map((value) => ({ value, label: t(`states.${value}`) })))
 
-const filteredAccounts = computed(() =>
-  accountsStore.accounts.filter((account) => {
-    if (stateFilter.value && normalizeStateKey(account.stateKey || account.state) !== stateFilter.value) {
-      return false
-    }
-    if (providerFilter.value && account.provider !== providerFilter.value) {
-      return false
-    }
-    if (!query.value.trim()) {
-      return true
-    }
-    const haystack = [account.name, account.email, account.provider, account.planType, account.probeErrorText].join(' ').toLowerCase()
-    return haystack.includes(query.value.trim().toLowerCase())
-  }),
+watch(
+  () => [accountsStore.query, accountsStore.stateFilter, accountsStore.providerFilter],
+  () => {
+    void accountsStore.loadAccountsPage({ resetPage: true })
+  },
 )
-
-const totalFiltered = computed(() => filteredAccounts.value.length)
-
-const paginatedAccounts = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  return filteredAccounts.value.slice(start, start + pageSize.value)
-})
-
-watch([query, stateFilter, providerFilter], () => {
-  currentPage.value = 1
-})
-
-watch(totalFiltered, (nextTotal) => {
-  const maxPage = Math.max(1, Math.ceil(nextTotal / pageSize.value))
-  if (currentPage.value > maxPage) {
-    currentPage.value = maxPage
-  }
-})
-
-watch(pageSize, () => {
-  currentPage.value = 1
-})
 
 async function probe(name: string) {
   try {
@@ -132,6 +96,14 @@ async function exportKind(kind: 'invalid401' | 'quotaLimited', format: 'json' | 
     ElMessage.error(toErrorMessage(error))
   }
 }
+
+function changePage(page: number) {
+  void accountsStore.loadAccountsPage({ page })
+}
+
+function changePageSize(pageSize: number) {
+  void accountsStore.loadAccountsPage({ pageSize, resetPage: true })
+}
 </script>
 
 <template>
@@ -139,11 +111,11 @@ async function exportKind(kind: 'invalid401' | 'quotaLimited', format: 'json' | 
     <section class="panel panel--fill">
       <div class="toolbar">
         <div class="toolbar-group">
-          <el-input v-model="query" :placeholder="t('accounts.searchPlaceholder')" clearable />
-          <el-select v-model="stateFilter" :placeholder="t('accounts.statePlaceholder')" clearable style="width: 180px">
+          <el-input v-model="accountsStore.query" :placeholder="t('accounts.searchPlaceholder')" clearable />
+          <el-select v-model="accountsStore.stateFilter" :placeholder="t('accounts.statePlaceholder')" clearable style="width: 180px">
             <el-option v-for="option in stateOptions" :key="option.value" :label="option.label" :value="option.value" />
           </el-select>
-          <el-select v-model="providerFilter" :placeholder="t('accounts.providerPlaceholder')" clearable style="width: 180px">
+          <el-select v-model="accountsStore.providerFilter" :placeholder="t('accounts.providerPlaceholder')" clearable style="width: 180px">
             <el-option v-for="provider in providerOptions" :key="provider" :label="provider" :value="provider" />
           </el-select>
         </div>
@@ -157,7 +129,7 @@ async function exportKind(kind: 'invalid401' | 'quotaLimited', format: 'json' | 
 
       <div class="panel__body panel__body--table">
         <div class="table-wrap">
-          <el-table :data="paginatedAccounts" height="100%">
+          <el-table :data="accountsStore.records" height="100%">
             <el-table-column prop="name" :label="t('accounts.columns.name')" min-width="220" />
             <el-table-column :label="t('accounts.columns.state')" width="144">
               <template #default="{ row }">
@@ -200,15 +172,17 @@ async function exportKind(kind: 'invalid401' | 'quotaLimited', format: 'json' | 
 
         <div class="table-footer">
           <span class="muted table-footer__summary">
-            {{ t('accounts.paginationSummary', { shown: paginatedAccounts.length, total: totalFiltered, all: accountsStore.accounts.length }) }}
+            {{ t('accounts.paginationSummary', { shown: accountsStore.records.length, total: accountsStore.totalRecords, all: accountsStore.summary.filteredAccounts }) }}
           </span>
           <el-pagination
-            v-model:current-page="currentPage"
-            v-model:page-size="pageSize"
+            :current-page="accountsStore.page"
+            :page-size="accountsStore.pageSize"
             background
             :page-sizes="pageSizeOptions"
-            :total="totalFiltered"
+            :total="accountsStore.totalRecords"
             layout="total, sizes, prev, pager, next, jumper"
+            @current-change="changePage"
+            @size-change="changePageSize"
           />
         </div>
       </div>

@@ -75,6 +75,7 @@ type AccountRecord struct {
 type DashboardSummary struct {
 	TotalAccounts     int    `json:"totalAccounts"`
 	FilteredAccounts  int    `json:"filteredAccounts"`
+	PendingCount      int    `json:"pendingCount"`
 	NormalCount       int    `json:"normalCount"`
 	Invalid401Count   int    `json:"invalid401Count"`
 	QuotaLimitedCount int    `json:"quotaLimitedCount"`
@@ -84,9 +85,22 @@ type DashboardSummary struct {
 }
 
 type DashboardSnapshot struct {
-	Summary  DashboardSummary `json:"summary"`
-	Accounts []AccountRecord  `json:"accounts"`
-	History  []ScanSummary    `json:"history"`
+	Summary DashboardSummary `json:"summary"`
+	History []ScanSummary    `json:"history"`
+}
+
+type AccountPage struct {
+	Records         []AccountRecord `json:"records"`
+	TotalRecords    int             `json:"totalRecords"`
+	Page            int             `json:"page"`
+	PageSize        int             `json:"pageSize"`
+	ProviderOptions []string        `json:"providerOptions"`
+}
+
+type InventorySyncResult struct {
+	TotalAccounts    int    `json:"totalAccounts"`
+	FilteredAccounts int    `json:"filteredAccounts"`
+	SyncedAt         string `json:"syncedAt"`
 }
 
 type MaintainOptions struct {
