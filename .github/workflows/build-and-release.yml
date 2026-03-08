@@ -25,11 +25,14 @@ jobs:
           - label: Windows
             os: windows-latest
             platform: windows/amd64
-            asset_name: cpa-control-center-windows-amd64.zip
+            artifact_name: cpa-control-center-windows-amd64-exe
+            release_file: cpa-control-center-windows-amd64.exe
           - label: macOS
             os: macos-latest
             platform: darwin/universal
-            asset_name: cpa-control-center-macos-universal.zip
+            artifact_name: cpa-control-center-macos-universal-app
+            release_file: cpa-control-center-macos-universal.zip
+            release_artifact_name: cpa-control-center-macos-universal-package
 
     env:
       NODE_OPTIONS: "--max-old-space-size=4096"
@@ -60,13 +63,14 @@ jobs:
       - name: Build Wails app
         run: wails build -clean -platform ${{ matrix.platform }}
 
-      - name: Package Windows artifact
+      - name: Prepare Windows release asset
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path build/bin/cpa-control-center.exe -DestinationPath build/bin/${{ matrix.asset_name }} -Force
+        run: Copy-Item build/bin/cpa-control-center.exe build/bin/${{ matrix.release_file }} -Force
 
-      - name: Package macOS artifact
+      - name: Locate macOS app bundle
         if: runner.os == 'macOS'
+        id: macos_bundle
         shell: bash
         run: |
           APP_PATH="$(find build/bin -maxdepth 1 -name '*.app' -print -quit)"
@@ -74,14 +78,38 @@ jobs:
             echo "Expected .app bundle not found in build/bin"
             exit 1
           fi
-          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "build/bin/${{ matrix.asset_name }}"
+          echo "app_path=$APP_PATH" >> "$GITHUB_OUTPUT"
 
-      - name: Upload packaged artifact
+      - name: Prepare macOS release asset
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          APP_PATH="${{ steps.macos_bundle.outputs.app_path }}"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "build/bin/${{ matrix.release_file }}"
+
+      - name: Upload Windows build artifact
+        if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset_name }}
+          name: ${{ matrix.artifact_name }}
           if-no-files-found: error
-          path: build/bin/${{ matrix.asset_name }}
+          path: build/bin/${{ matrix.release_file }}
+
+      - name: Upload macOS build artifact
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          if-no-files-found: error
+          path: ${{ steps.macos_bundle.outputs.app_path }}
+
+      - name: Upload macOS release package artifact
+        if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.release_artifact_name }}
+          if-no-files-found: error
+          path: build/bin/${{ matrix.release_file }}
 
   release:
     name: Publish GitHub Release
@@ -93,10 +121,17 @@ jobs:
       contents: write
 
     steps:
-      - name: Download packaged artifacts
+      - name: Download Windows release asset
         uses: actions/download-artifact@v4
         with:
-          path: release-assets
+          name: cpa-control-center-windows-amd64-exe
+          path: release-assets/windows
+
+      - name: Download macOS release asset
+        uses: actions/download-artifact@v4
+        with:
+          name: cpa-control-center-macos-universal-package
+          path: release-assets/macos
 
       - name: Flatten release asset paths
         shell: bash
