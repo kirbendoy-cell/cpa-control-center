@@ -1,0 +1,183 @@
+package backend
+
+type AppSettings struct {
+	BaseURL         string `json:"baseUrl"`
+	ManagementToken string `json:"managementToken"`
+	Locale          string `json:"locale"`
+	DetailedLogs    bool   `json:"detailedLogs"`
+	TargetType      string `json:"targetType"`
+	Provider        string `json:"provider"`
+	ProbeWorkers    int    `json:"probeWorkers"`
+	ActionWorkers   int    `json:"actionWorkers"`
+	TimeoutSeconds  int    `json:"timeoutSeconds"`
+	Retries         int    `json:"retries"`
+	UserAgent       string `json:"userAgent"`
+	QuotaAction     string `json:"quotaAction"`
+	Delete401       bool   `json:"delete401"`
+	AutoReenable    bool   `json:"autoReenable"`
+	ExportDirectory string `json:"exportDirectory"`
+}
+
+type ConnectionResult struct {
+	OK           bool   `json:"ok"`
+	Message      string `json:"message"`
+	AccountCount int    `json:"accountCount"`
+	CheckedAt    string `json:"checkedAt"`
+}
+
+type AccountFilter struct {
+	Query    string `json:"query"`
+	State    string `json:"state"`
+	Provider string `json:"provider"`
+	Type     string `json:"type"`
+}
+
+type AccountRecord struct {
+	Name             string `json:"name"`
+	AuthIndex        string `json:"authIndex"`
+	Email            string `json:"email"`
+	Provider         string `json:"provider"`
+	Type             string `json:"type"`
+	PlanType         string `json:"planType"`
+	Account          string `json:"account"`
+	Source           string `json:"source"`
+	Status           string `json:"status"`
+	StatusMessage    string `json:"statusMessage"`
+	State            string `json:"state"`
+	StateKey         string `json:"stateKey"`
+	Disabled         bool   `json:"disabled"`
+	Unavailable      bool   `json:"unavailable"`
+	RuntimeOnly      bool   `json:"runtimeOnly"`
+	Allowed          *bool  `json:"allowed"`
+	LimitReached     *bool  `json:"limitReached"`
+	Invalid401       bool   `json:"invalid401"`
+	QuotaLimited     bool   `json:"quotaLimited"`
+	Recovered        bool   `json:"recovered"`
+	Error            bool   `json:"error"`
+	APIHTTPStatus    *int   `json:"apiHttpStatus"`
+	APIStatusCode    *int   `json:"apiStatusCode"`
+	ProbeErrorKind   string `json:"probeErrorKind"`
+	ProbeErrorText   string `json:"probeErrorText"`
+	ManagedReason    string `json:"managedReason"`
+	LastAction       string `json:"lastAction"`
+	LastActionStatus string `json:"lastActionStatus"`
+	LastActionError  string `json:"lastActionError"`
+	LastSeenAt       string `json:"lastSeenAt"`
+	LastProbedAt     string `json:"lastProbedAt"`
+	UpdatedAt        string `json:"updatedAt"`
+	ChatGPTAccountID string `json:"chatgptAccountId"`
+	IDTokenPlanType  string `json:"idTokenPlanType"`
+	AuthUpdatedAt    string `json:"authUpdatedAt"`
+	AuthModTime      string `json:"authModTime"`
+	AuthLastRefresh  string `json:"authLastRefresh"`
+}
+
+type DashboardSummary struct {
+	TotalAccounts     int    `json:"totalAccounts"`
+	FilteredAccounts  int    `json:"filteredAccounts"`
+	NormalCount       int    `json:"normalCount"`
+	Invalid401Count   int    `json:"invalid401Count"`
+	QuotaLimitedCount int    `json:"quotaLimitedCount"`
+	RecoveredCount    int    `json:"recoveredCount"`
+	ErrorCount        int    `json:"errorCount"`
+	LastScanAt        string `json:"lastScanAt"`
+}
+
+type DashboardSnapshot struct {
+	Summary  DashboardSummary `json:"summary"`
+	Accounts []AccountRecord  `json:"accounts"`
+	History  []ScanSummary    `json:"history"`
+}
+
+type MaintainOptions struct {
+	Delete401    bool   `json:"delete401"`
+	QuotaAction  string `json:"quotaAction"`
+	AutoReenable bool   `json:"autoReenable"`
+}
+
+type MaintainResult struct {
+	Scan               ScanSummary    `json:"scan"`
+	Delete401Results   []ActionResult `json:"delete401Results"`
+	QuotaActionResults []ActionResult `json:"quotaActionResults"`
+	ReenableResults    []ActionResult `json:"reenableResults"`
+}
+
+type ActionResult struct {
+	Name       string `json:"name"`
+	OK         bool   `json:"ok"`
+	Action     string `json:"action"`
+	Disabled   *bool  `json:"disabled"`
+	StatusCode *int   `json:"statusCode"`
+	Error      string `json:"error"`
+}
+
+type ExportRequest struct {
+	Kind   string `json:"kind"`
+	Format string `json:"format"`
+	Path   string `json:"path"`
+}
+
+type ExportResult struct {
+	Kind     string `json:"kind"`
+	Format   string `json:"format"`
+	Path     string `json:"path"`
+	Exported int    `json:"exported"`
+}
+
+type ScanSummary struct {
+	RunID             int64  `json:"runId"`
+	Status            string `json:"status"`
+	StartedAt         string `json:"startedAt"`
+	FinishedAt        string `json:"finishedAt"`
+	TotalAccounts     int    `json:"totalAccounts"`
+	FilteredAccounts  int    `json:"filteredAccounts"`
+	ProbedAccounts    int    `json:"probedAccounts"`
+	NormalCount       int    `json:"normalCount"`
+	Invalid401Count   int    `json:"invalid401Count"`
+	QuotaLimitedCount int    `json:"quotaLimitedCount"`
+	RecoveredCount    int    `json:"recoveredCount"`
+	ErrorCount        int    `json:"errorCount"`
+	Delete401         bool   `json:"delete401"`
+	QuotaAction       string `json:"quotaAction"`
+	AutoReenable      bool   `json:"autoReenable"`
+	ProbeWorkers      int    `json:"probeWorkers"`
+	ActionWorkers     int    `json:"actionWorkers"`
+	TimeoutSeconds    int    `json:"timeoutSeconds"`
+	Retries           int    `json:"retries"`
+	Message           string `json:"message"`
+}
+
+type ScanDetail struct {
+	Summary ScanSummary     `json:"summary"`
+	Records []AccountRecord `json:"records"`
+}
+
+type ScanDetailPage struct {
+	Summary      ScanSummary     `json:"summary"`
+	Records      []AccountRecord `json:"records"`
+	TotalRecords int             `json:"totalRecords"`
+	Page         int             `json:"page"`
+	PageSize     int             `json:"pageSize"`
+}
+
+type TaskProgress struct {
+	Kind    string `json:"kind"`
+	Phase   string `json:"phase"`
+	Current int    `json:"current"`
+	Total   int    `json:"total"`
+	Message string `json:"message"`
+	Done    bool   `json:"done"`
+}
+
+type LogEntry struct {
+	Kind      string `json:"kind"`
+	Level     string `json:"level"`
+	Message   string `json:"message"`
+	Timestamp string `json:"timestamp"`
+}
+
+type AccountUpdate struct {
+	Action  string        `json:"action"`
+	Removed bool          `json:"removed"`
+	Record  AccountRecord `json:"record"`
+}
