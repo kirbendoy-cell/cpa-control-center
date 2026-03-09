@@ -1,5 +1,3 @@
-# CPA Control Center {{VERSION}}
-
 ## Release Summary
 
 This release contains the latest desktop app build for CPA-managed Codex auth pools.
