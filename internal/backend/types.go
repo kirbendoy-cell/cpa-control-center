@@ -1,21 +1,44 @@
 package backend
 
 type AppSettings struct {
-	BaseURL         string `json:"baseUrl"`
-	ManagementToken string `json:"managementToken"`
-	Locale          string `json:"locale"`
-	DetailedLogs    bool   `json:"detailedLogs"`
-	TargetType      string `json:"targetType"`
-	Provider        string `json:"provider"`
-	ProbeWorkers    int    `json:"probeWorkers"`
-	ActionWorkers   int    `json:"actionWorkers"`
-	TimeoutSeconds  int    `json:"timeoutSeconds"`
-	Retries         int    `json:"retries"`
-	UserAgent       string `json:"userAgent"`
-	QuotaAction     string `json:"quotaAction"`
-	Delete401       bool   `json:"delete401"`
-	AutoReenable    bool   `json:"autoReenable"`
-	ExportDirectory string `json:"exportDirectory"`
+	BaseURL         string           `json:"baseUrl"`
+	ManagementToken string           `json:"managementToken"`
+	Locale          string           `json:"locale"`
+	DetailedLogs    bool             `json:"detailedLogs"`
+	TargetType      string           `json:"targetType"`
+	Provider        string           `json:"provider"`
+	ScanStrategy    string           `json:"scanStrategy"`
+	ScanBatchSize   int              `json:"scanBatchSize"`
+	ProbeWorkers    int              `json:"probeWorkers"`
+	ActionWorkers   int              `json:"actionWorkers"`
+	TimeoutSeconds  int              `json:"timeoutSeconds"`
+	Retries         int              `json:"retries"`
+	UserAgent       string           `json:"userAgent"`
+	QuotaAction     string           `json:"quotaAction"`
+	Delete401       bool             `json:"delete401"`
+	AutoReenable    bool             `json:"autoReenable"`
+	ExportDirectory string           `json:"exportDirectory"`
+	Schedule        ScheduleSettings `json:"schedule"`
+}
+
+type ScheduleSettings struct {
+	Enabled bool   `json:"enabled"`
+	Mode    string `json:"mode"`
+	Cron    string `json:"cron"`
+}
+
+type SchedulerStatus struct {
+	Enabled           bool   `json:"enabled"`
+	Mode              string `json:"mode"`
+	Cron              string `json:"cron"`
+	Valid             bool   `json:"valid"`
+	ValidationMessage string `json:"validationMessage"`
+	Running           bool   `json:"running"`
+	NextRunAt         string `json:"nextRunAt"`
+	LastStartedAt     string `json:"lastStartedAt"`
+	LastFinishedAt    string `json:"lastFinishedAt"`
+	LastStatus        string `json:"lastStatus"`
+	LastMessage       string `json:"lastMessage"`
 }
 
 type ConnectionResult struct {
@@ -181,6 +204,12 @@ type TaskProgress struct {
 	Total   int    `json:"total"`
 	Message string `json:"message"`
 	Done    bool   `json:"done"`
+}
+
+type TaskFinished struct {
+	Kind    string `json:"kind"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
 }
 
 type LogEntry struct {

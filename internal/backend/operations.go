@@ -27,6 +27,11 @@ func (b *Backend) RunScan() (ScanSummary, error) {
 	defer b.endTask()
 
 	summary, _, err := b.runScan(ctx, "scan", settings)
+	status := summary.Status
+	if status == "" {
+		status = taskStatus(err)
+	}
+	b.emitTaskFinished("scan", status, summary.Message)
 	return summary, err
 }
 
@@ -51,7 +56,13 @@ func (b *Backend) RunMaintain(options MaintainOptions) (MaintainResult, error) {
 	}
 	defer b.endTask()
 
-	return b.runMaintain(ctx, settings)
+	result, err := b.runMaintain(ctx, settings)
+	status := taskStatus(err)
+	if err == nil {
+		status = "success"
+	}
+	b.emitTaskFinished("maintain", status, result.Scan.Message)
+	return result, err
 }
 
 func (b *Backend) ProbeAccount(name string) (AccountRecord, error) {
@@ -279,7 +290,20 @@ func (b *Backend) runScan(ctx context.Context, kind string, settings AppSettings
 	summary.FilteredAccounts = len(candidates)
 	b.emitLog(kind, "info", msg(settings.Locale, "task.scan.prepared_candidates", len(candidates), len(records)))
 
-	probed, err := b.probeAccounts(ctx, kind, settings, candidates)
+	selectedCandidates := candidates
+	selectedIndexes := candidateIndexes
+	if useIncrementalScan(kind, settings) && len(candidates) > settings.ScanBatchSize {
+		selected := selectIncrementalCandidateIndexes(candidates, settings.ScanBatchSize)
+		selectedCandidates = make([]AccountRecord, 0, len(selected))
+		selectedIndexes = make([]int, 0, len(selected))
+		for _, idx := range selected {
+			selectedCandidates = append(selectedCandidates, candidates[idx])
+			selectedIndexes = append(selectedIndexes, candidateIndexes[idx])
+		}
+		b.emitLog(kind, "info", msg(settings.Locale, "task.scan.incremental_selected", len(selectedCandidates), len(candidates), settings.ScanBatchSize))
+	}
+
+	probed, err := b.probeAccounts(ctx, kind, settings, selectedCandidates)
 	if err != nil {
 		summary.Status = taskStatus(err)
 		summary.Message = err.Error()
@@ -287,7 +311,7 @@ func (b *Backend) runScan(ctx context.Context, kind string, settings AppSettings
 		return summary, nil, err
 	}
 
-	for i, index := range candidateIndexes {
+	for i, index := range selectedIndexes {
 		records[index] = probed[i]
 	}
 
@@ -310,8 +334,12 @@ func (b *Backend) runScan(ctx context.Context, kind string, settings AppSettings
 	filtered := filterAccountsBySettings(records, settings)
 	dashboard := computeSummary(filtered)
 	summary.Status = "success"
-	summary.Message = msg(settings.Locale, "task.scan.completed", len(filtered))
-	summary.ProbedAccounts = len(candidates)
+	summary.ProbedAccounts = len(selectedCandidates)
+	if len(selectedCandidates) < len(candidates) {
+		summary.Message = msg(settings.Locale, "task.scan.completed_partial", len(selectedCandidates), len(candidates))
+	} else {
+		summary.Message = msg(settings.Locale, "task.scan.completed", len(filtered))
+	}
 	summary.NormalCount = dashboard.NormalCount
 	summary.Invalid401Count = dashboard.Invalid401Count
 	summary.QuotaLimitedCount = dashboard.QuotaLimitedCount

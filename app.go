@@ -83,12 +83,28 @@ func (a *App) TestConnection(input backend.AppSettings) (backend.ConnectionResul
 	return service.TestConnection(input)
 }
 
+func (a *App) TestAndSaveSettings(input backend.AppSettings) (backend.ConnectionResult, error) {
+	service, err := a.ensureBackend()
+	if err != nil {
+		return backend.ConnectionResult{}, err
+	}
+	return service.TestAndSaveSettings(input)
+}
+
 func (a *App) SyncInventory() (backend.InventorySyncResult, error) {
 	service, err := a.ensureBackend()
 	if err != nil {
 		return backend.InventorySyncResult{}, err
 	}
 	return service.SyncInventory()
+}
+
+func (a *App) GetSchedulerStatus() (backend.SchedulerStatus, error) {
+	service, err := a.ensureBackend()
+	if err != nil {
+		return backend.SchedulerStatus{}, err
+	}
+	return service.GetSchedulerStatus(), nil
 }
 
 func (a *App) GetDashboardSummary() (backend.DashboardSummary, error) {

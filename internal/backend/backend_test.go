@@ -16,6 +16,8 @@ type fakeCPAServer struct {
 	deleted   []string
 	disabled  []string
 	reenabled []string
+	fetches   int
+	apiCalls  int
 }
 
 func (f *fakeCPAServer) handler(w http.ResponseWriter, r *http.Request) {
@@ -24,8 +26,10 @@ func (f *fakeCPAServer) handler(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/v0/management/auth-files":
+		f.fetches++
 		_ = json.NewEncoder(w).Encode(map[string]any{"files": f.files})
 	case r.Method == http.MethodPost && r.URL.Path == "/v0/management/api-call":
+		f.apiCalls++
 		var body struct {
 			AuthIndex string `json:"authIndex"`
 		}
@@ -74,6 +78,75 @@ func (f *fakeCPAServer) handler(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
 	default:
 		http.NotFound(w, r)
+	}
+}
+
+func TestBackendTestAndSaveSettingsFetchesInventoryOnce(t *testing.T) {
+	serverState := &fakeCPAServer{
+		files: []map[string]any{
+			{
+				"name":       "inventory-only.json",
+				"type":       "codex",
+				"provider":   "codex",
+				"auth_index": "healthy",
+				"id_token":   `{"chatgpt_account_id":"acct-inventory","plan_type":"pro"}`,
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(serverState.handler))
+	defer server.Close()
+
+	dataDir := t.TempDir()
+	service, err := New(dataDir, nil)
+	if err != nil {
+		t.Fatalf("New backend: %v", err)
+	}
+	defer service.Close()
+
+	result, err := service.TestAndSaveSettings(AppSettings{
+		BaseURL:         server.URL,
+		ManagementToken: "token",
+		Locale:          localeEnglish,
+		TargetType:      "codex",
+		ProbeWorkers:    4,
+		ActionWorkers:   2,
+		TimeoutSeconds:  5,
+		Retries:         0,
+		UserAgent:       defaultUserAgent,
+		QuotaAction:     "disable",
+		Delete401:       true,
+		AutoReenable:    true,
+		ExportDirectory: filepath.Join(dataDir, "exports"),
+	})
+	if err != nil {
+		t.Fatalf("TestAndSaveSettings: %v", err)
+	}
+	if !result.OK || result.AccountCount != 1 {
+		t.Fatalf("unexpected connection result: %+v", result)
+	}
+
+	serverState.mu.Lock()
+	fetches := serverState.fetches
+	serverState.mu.Unlock()
+	if fetches != 1 {
+		t.Fatalf("expected exactly one auth-files fetch, got %d", fetches)
+	}
+
+	savedSettings, err := service.GetSettings()
+	if err != nil {
+		t.Fatalf("GetSettings: %v", err)
+	}
+	if savedSettings.BaseURL != server.URL || savedSettings.ManagementToken != "token" {
+		t.Fatalf("settings were not persisted: %+v", savedSettings)
+	}
+
+	snapshot, err := service.GetDashboardSnapshot()
+	if err != nil {
+		t.Fatalf("GetDashboardSnapshot: %v", err)
+	}
+	if snapshot.Summary.FilteredAccounts != 1 || snapshot.Summary.PendingCount != 1 {
+		t.Fatalf("unexpected dashboard snapshot after test-and-save: %+v", snapshot.Summary)
 	}
 }
 
@@ -367,4 +440,269 @@ func TestInventorySyncAndScanPreservePendingOutsideCurrentFilter(t *testing.T) {
 	if snapshotAfterScan.Summary.FilteredAccounts != 2 || snapshotAfterScan.Summary.NormalCount != 1 || snapshotAfterScan.Summary.PendingCount != 1 {
 		t.Fatalf("unexpected snapshot after scan widen: %+v", snapshotAfterScan.Summary)
 	}
+}
+
+func TestIncrementalScanOnlyProbesSelectedBatch(t *testing.T) {
+	serverState := &fakeCPAServer{
+		files: []map[string]any{
+			{
+				"name":       "account-a.json",
+				"type":       "codex",
+				"provider":   "codex",
+				"auth_index": "healthy-a",
+				"id_token":   `{"chatgpt_account_id":"acct-a","plan_type":"pro"}`,
+			},
+			{
+				"name":       "account-b.json",
+				"type":       "codex",
+				"provider":   "codex",
+				"auth_index": "healthy-b",
+				"id_token":   `{"chatgpt_account_id":"acct-b","plan_type":"pro"}`,
+			},
+			{
+				"name":       "account-c.json",
+				"type":       "codex",
+				"provider":   "codex",
+				"auth_index": "healthy-c",
+				"id_token":   `{"chatgpt_account_id":"acct-c","plan_type":"pro"}`,
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(serverState.handler))
+	defer server.Close()
+
+	dataDir := t.TempDir()
+	service, err := New(dataDir, nil)
+	if err != nil {
+		t.Fatalf("New backend: %v", err)
+	}
+	defer service.Close()
+
+	_, err = service.SaveSettings(AppSettings{
+		BaseURL:         server.URL,
+		ManagementToken: "token",
+		Locale:          localeEnglish,
+		TargetType:      "codex",
+		ScanStrategy:    "incremental",
+		ScanBatchSize:   2,
+		ProbeWorkers:    2,
+		ActionWorkers:   1,
+		TimeoutSeconds:  5,
+		Retries:         0,
+		UserAgent:       defaultUserAgent,
+		QuotaAction:     "disable",
+		ExportDirectory: filepath.Join(dataDir, "exports"),
+	})
+	if err != nil {
+		t.Fatalf("SaveSettings: %v", err)
+	}
+
+	if _, err := service.SyncInventory(); err != nil {
+		t.Fatalf("SyncInventory: %v", err)
+	}
+
+	firstSummary, err := service.RunScan()
+	if err != nil {
+		t.Fatalf("RunScan first: %v", err)
+	}
+	if firstSummary.FilteredAccounts != 3 || firstSummary.ProbedAccounts != 2 {
+		t.Fatalf("unexpected first incremental summary: %+v", firstSummary)
+	}
+
+	firstSnapshot, err := service.GetDashboardSnapshot()
+	if err != nil {
+		t.Fatalf("GetDashboardSnapshot first: %v", err)
+	}
+	if firstSnapshot.Summary.PendingCount != 1 || firstSnapshot.Summary.NormalCount != 2 {
+		t.Fatalf("unexpected first incremental snapshot: %+v", firstSnapshot.Summary)
+	}
+
+	serverState.mu.Lock()
+	firstAPICalls := serverState.apiCalls
+	serverState.mu.Unlock()
+	if firstAPICalls != 2 {
+		t.Fatalf("expected 2 probe calls on first incremental scan, got %d", firstAPICalls)
+	}
+
+	secondSummary, err := service.RunScan()
+	if err != nil {
+		t.Fatalf("RunScan second: %v", err)
+	}
+	if secondSummary.FilteredAccounts != 3 || secondSummary.ProbedAccounts != 2 {
+		t.Fatalf("unexpected second incremental summary: %+v", secondSummary)
+	}
+
+	secondSnapshot, err := service.GetDashboardSnapshot()
+	if err != nil {
+		t.Fatalf("GetDashboardSnapshot second: %v", err)
+	}
+	if secondSnapshot.Summary.PendingCount != 0 || secondSnapshot.Summary.NormalCount != 3 {
+		t.Fatalf("unexpected second incremental snapshot: %+v", secondSnapshot.Summary)
+	}
+
+	serverState.mu.Lock()
+	secondAPICalls := serverState.apiCalls
+	serverState.mu.Unlock()
+	if secondAPICalls != 4 {
+		t.Fatalf("expected total 4 probe calls after two incremental scans, got %d", secondAPICalls)
+	}
+}
+
+func TestSchedulerStatusValidationAndScheduledScan(t *testing.T) {
+	serverState := &fakeCPAServer{
+		files: []map[string]any{
+			{
+				"name":       "scheduled-codex.json",
+				"type":       "codex",
+				"provider":   "codex",
+				"auth_index": "healthy",
+				"id_token":   `{"chatgpt_account_id":"acct-scheduled","plan_type":"pro"}`,
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(serverState.handler))
+	defer server.Close()
+
+	dataDir := t.TempDir()
+	service, err := New(dataDir, nil)
+	if err != nil {
+		t.Fatalf("New backend: %v", err)
+	}
+	defer service.Close()
+
+	settings := AppSettings{
+		BaseURL:         server.URL,
+		ManagementToken: "token",
+		Locale:          localeEnglish,
+		TargetType:      "codex",
+		ProbeWorkers:    2,
+		ActionWorkers:   1,
+		TimeoutSeconds:  5,
+		Retries:         0,
+		UserAgent:       defaultUserAgent,
+		QuotaAction:     "disable",
+		Delete401:       true,
+		AutoReenable:    true,
+		ExportDirectory: filepath.Join(dataDir, "exports"),
+		Schedule: ScheduleSettings{
+			Enabled: true,
+			Mode:    "scan",
+			Cron:    "*/15 * * * *",
+		},
+	}
+
+	if _, err := service.SaveSettings(settings); err != nil {
+		t.Fatalf("SaveSettings: %v", err)
+	}
+
+	status := service.GetSchedulerStatus()
+	if !status.Enabled || !status.Valid || status.Mode != "scan" || status.NextRunAt == "" {
+		t.Fatalf("unexpected scheduler status after save: %+v", status)
+	}
+
+	if _, err := service.SaveSettings(AppSettings{
+		BaseURL:         server.URL,
+		ManagementToken: "token",
+		Locale:          localeEnglish,
+		TargetType:      "codex",
+		ProbeWorkers:    2,
+		ActionWorkers:   1,
+		TimeoutSeconds:  5,
+		Retries:         0,
+		UserAgent:       defaultUserAgent,
+		QuotaAction:     "disable",
+		ExportDirectory: filepath.Join(dataDir, "exports"),
+		Schedule: ScheduleSettings{
+			Enabled: true,
+			Mode:    "scan",
+			Cron:    "not-a-cron",
+		},
+	}); err == nil {
+		t.Fatal("expected invalid cron save to fail")
+	}
+
+	service.scheduler.execute(service.scheduler.version, "scan", "*/15 * * * *")
+
+	updatedStatus := service.GetSchedulerStatus()
+	if updatedStatus.LastStatus != "success" || updatedStatus.LastStartedAt == "" || updatedStatus.LastFinishedAt == "" {
+		t.Fatalf("unexpected scheduler runtime status: %+v", updatedStatus)
+	}
+
+	snapshot, err := service.GetDashboardSnapshot()
+	if err != nil {
+		t.Fatalf("GetDashboardSnapshot: %v", err)
+	}
+	if snapshot.Summary.FilteredAccounts != 1 || snapshot.Summary.NormalCount != 1 || len(snapshot.History) != 1 {
+		t.Fatalf("unexpected snapshot after scheduled scan: %+v", snapshot)
+	}
+}
+
+func TestScheduledTaskSkipsWhenAnotherTaskIsRunning(t *testing.T) {
+	serverState := &fakeCPAServer{
+		files: []map[string]any{
+			{
+				"name":       "scheduled-maintain.json",
+				"type":       "codex",
+				"provider":   "codex",
+				"auth_index": "healthy",
+				"id_token":   `{"chatgpt_account_id":"acct-maintain","plan_type":"pro"}`,
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(serverState.handler))
+	defer server.Close()
+
+	dataDir := t.TempDir()
+	service, err := New(dataDir, nil)
+	if err != nil {
+		t.Fatalf("New backend: %v", err)
+	}
+	defer service.Close()
+
+	if _, err := service.SaveSettings(AppSettings{
+		BaseURL:         server.URL,
+		ManagementToken: "token",
+		Locale:          localeEnglish,
+		TargetType:      "codex",
+		ProbeWorkers:    2,
+		ActionWorkers:   1,
+		TimeoutSeconds:  5,
+		Retries:         0,
+		UserAgent:       defaultUserAgent,
+		QuotaAction:     "disable",
+		ExportDirectory: filepath.Join(dataDir, "exports"),
+		Schedule: ScheduleSettings{
+			Enabled: true,
+			Mode:    "maintain",
+			Cron:    "0 * * * *",
+		},
+	}); err != nil {
+		t.Fatalf("SaveSettings: %v", err)
+	}
+
+	ctx, err := service.beginTask("scan", localeEnglish)
+	if err != nil {
+		t.Fatalf("beginTask: %v", err)
+	}
+	defer func() {
+		if ctx != nil {
+			service.endTask()
+		}
+	}()
+
+	service.scheduler.execute(service.scheduler.version, "maintain", "0 * * * *")
+
+	status := service.GetSchedulerStatus()
+	if status.LastStatus != "skipped" {
+		t.Fatalf("expected skipped scheduler status, got %+v", status)
+	}
+	if len(serverState.deleted) != 0 || len(serverState.disabled) != 0 || len(serverState.reenabled) != 0 {
+		t.Fatalf("scheduled task should not have executed actions: deleted=%v disabled=%v reenabled=%v", serverState.deleted, serverState.disabled, serverState.reenabled)
+	}
+
+	ctx = nil
+	service.endTask()
 }

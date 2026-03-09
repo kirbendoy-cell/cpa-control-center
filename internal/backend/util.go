@@ -12,11 +12,14 @@ import (
 
 const (
 	defaultTargetType    = "codex"
+	defaultScanStrategy  = "full"
+	defaultScanBatchSize = 1000
 	defaultProbeWorkers  = 40
 	defaultActionWorkers = 20
 	defaultTimeout       = 15
-	defaultRetries       = 1
+	defaultRetries       = 3
 	defaultQuotaAction   = "disable"
+	defaultScheduleMode  = "scan"
 	defaultUserAgent     = "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal"
 	defaultHistoryLimit  = 30
 	whamUsageURL         = "https://chatgpt.com/backend-api/wham/usage"
@@ -27,6 +30,8 @@ func defaultSettings(exportDir string) AppSettings {
 		Locale:          localeOrDefault(""),
 		DetailedLogs:    false,
 		TargetType:      defaultTargetType,
+		ScanStrategy:    defaultScanStrategy,
+		ScanBatchSize:   defaultScanBatchSize,
 		ProbeWorkers:    defaultProbeWorkers,
 		ActionWorkers:   defaultActionWorkers,
 		TimeoutSeconds:  defaultTimeout,
@@ -36,6 +41,11 @@ func defaultSettings(exportDir string) AppSettings {
 		Delete401:       true,
 		AutoReenable:    true,
 		ExportDirectory: exportDir,
+		Schedule: ScheduleSettings{
+			Enabled: false,
+			Mode:    defaultScheduleMode,
+			Cron:    "",
+		},
 	}
 }
 
@@ -57,6 +67,12 @@ func normalizeSettings(input AppSettings, exportDir string) AppSettings {
 	}
 	if trimmed := strings.TrimSpace(input.Provider); trimmed != "" {
 		settings.Provider = strings.ToLower(trimmed)
+	}
+	if normalized := normalizeScanStrategy(input.ScanStrategy); normalized != "" {
+		settings.ScanStrategy = normalized
+	}
+	if input.ScanBatchSize > 0 {
+		settings.ScanBatchSize = input.ScanBatchSize
 	}
 	if input.ProbeWorkers > 0 {
 		settings.ProbeWorkers = input.ProbeWorkers
@@ -81,12 +97,35 @@ func normalizeSettings(input AppSettings, exportDir string) AppSettings {
 	if trimmed := strings.TrimSpace(input.ExportDirectory); trimmed != "" {
 		settings.ExportDirectory = trimmed
 	}
+	settings.Schedule.Enabled = input.Schedule.Enabled
+	if normalized := normalizeScheduleMode(input.Schedule.Mode); normalized != "" {
+		settings.Schedule.Mode = normalized
+	}
+	settings.Schedule.Cron = strings.TrimSpace(input.Schedule.Cron)
 
 	if settings.ExportDirectory == "" {
 		settings.ExportDirectory = exportDir
 	}
 
 	return settings
+}
+
+func normalizeScanStrategy(strategy string) string {
+	switch strings.ToLower(strings.TrimSpace(strategy)) {
+	case "incremental":
+		return "incremental"
+	default:
+		return defaultScanStrategy
+	}
+}
+
+func normalizeScheduleMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "maintain":
+		return "maintain"
+	default:
+		return defaultScheduleMode
+	}
 }
 
 func nowISO() string {
@@ -207,6 +246,45 @@ func sortAccounts(records []AccountRecord) {
 	})
 }
 
+func useIncrementalScan(kind string, settings AppSettings) bool {
+	return kind == "scan" && normalizeScanStrategy(settings.ScanStrategy) == "incremental" && settings.ScanBatchSize > 0
+}
+
+func selectIncrementalCandidateIndexes(candidates []AccountRecord, batchSize int) []int {
+	if batchSize <= 0 || len(candidates) <= batchSize {
+		indexes := make([]int, len(candidates))
+		for i := range candidates {
+			indexes[i] = i
+		}
+		return indexes
+	}
+
+	indexes := make([]int, len(candidates))
+	for i := range candidates {
+		indexes[i] = i
+	}
+	sort.Slice(indexes, func(i, j int) bool {
+		left := candidates[indexes[i]]
+		right := candidates[indexes[j]]
+		leftPending := strings.TrimSpace(left.LastProbedAt) == ""
+		rightPending := strings.TrimSpace(right.LastProbedAt) == ""
+		if leftPending != rightPending {
+			return leftPending
+		}
+		if left.LastProbedAt != right.LastProbedAt {
+			return left.LastProbedAt < right.LastProbedAt
+		}
+		leftState := normalizeStateKey(left.StateKey)
+		rightState := normalizeStateKey(right.StateKey)
+		if leftState != rightState {
+			return statusSortOrder(leftState) < statusSortOrder(rightState)
+		}
+		return strings.ToLower(left.Name) < strings.ToLower(right.Name)
+	})
+
+	return indexes[:batchSize]
+}
+
 func statusSortOrder(state string) int {
 	switch normalizeStateKey(state) {
 	case stateInvalid401:
@@ -234,6 +312,8 @@ func settingsSummary(locale string, settings AppSettings) string {
 		"settings.summary",
 		settings.TargetType,
 		stringOr(settings.Provider, "(any)"),
+		settings.ScanStrategy,
+		settings.ScanBatchSize,
 		settings.ProbeWorkers,
 		settings.ActionWorkers,
 		settings.TimeoutSeconds,
@@ -242,6 +322,17 @@ func settingsSummary(locale string, settings AppSettings) string {
 		boolLabel(locale, settings.Delete401),
 		boolLabel(locale, settings.AutoReenable),
 	)
+}
+
+func validateScanSettings(locale string, strategy string, batchSize int) error {
+	normalized := strings.ToLower(strings.TrimSpace(strategy))
+	if normalized != "" && normalized != "full" && normalized != "incremental" {
+		return fmt.Errorf("%s", msg(locale, "error.scan_invalid_strategy"))
+	}
+	if normalizeScanStrategy(strategy) == "incremental" && batchSize < 1 {
+		return fmt.Errorf("%s", msg(locale, "error.scan_batch_size_invalid"))
+	}
+	return nil
 }
 
 func marshalRecord(record AccountRecord) (string, error) {

@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 )
@@ -12,14 +13,30 @@ type EventEmitter interface {
 }
 
 type Backend struct {
-	store   *Store
-	client  *Client
-	logger  *Logger
-	emitter EventEmitter
+	store     *Store
+	client    *Client
+	logger    *Logger
+	emitter   EventEmitter
+	scheduler *schedulerRuntime
 
 	mu         sync.Mutex
 	activeKind string
 	cancelFunc context.CancelFunc
+}
+
+var errTaskAlreadyRunning = errors.New("task already running")
+
+type taskRunningError struct {
+	locale     string
+	activeKind string
+}
+
+func (e taskRunningError) Error() string {
+	return msg(e.locale, "error.task_already_running", taskName(e.locale, e.activeKind))
+}
+
+func (e taskRunningError) Unwrap() error {
+	return errTaskAlreadyRunning
 }
 
 func New(dataDir string, emitter EventEmitter) (*Backend, error) {
@@ -34,12 +51,23 @@ func New(dataDir string, emitter EventEmitter) (*Backend, error) {
 		return nil, err
 	}
 
-	return &Backend{
+	service := &Backend{
 		store:   store,
 		client:  NewClient(),
 		logger:  logger,
 		emitter: emitter,
-	}, nil
+	}
+	service.scheduler = newSchedulerRuntime(service)
+
+	settings, err := store.LoadSettings()
+	if err != nil {
+		_ = logger.Close()
+		_ = store.Close()
+		return nil, err
+	}
+	service.scheduler.ApplySettings(settings)
+
+	return service, nil
 }
 
 func DefaultDataDir() (string, error) {
@@ -55,6 +83,9 @@ func (b *Backend) Close() error {
 		return nil
 	}
 	var firstErr error
+	if b.scheduler != nil {
+		b.scheduler.Close()
+	}
 	if err := b.logger.Close(); err != nil {
 		firstErr = err
 	}
@@ -69,9 +100,61 @@ func (b *Backend) GetSettings() (AppSettings, error) {
 }
 
 func (b *Backend) SaveSettings(input AppSettings) (AppSettings, error) {
+	return b.saveSettings(input)
+}
+
+func (b *Backend) TestAndSaveSettings(input AppSettings) (ConnectionResult, error) {
+	settings := normalizeSettings(input, b.store.exportsDir)
+	if err := ensureConfigured(settings); err != nil {
+		return ConnectionResult{
+			OK:        false,
+			Message:   err.Error(),
+			CheckedAt: nowISO(),
+		}, err
+	}
+
+	files, err := b.client.FetchAuthFiles(context.Background(), settings)
+	if err != nil {
+		return ConnectionResult{
+			OK:        false,
+			Message:   err.Error(),
+			CheckedAt: nowISO(),
+		}, err
+	}
+
+	settings, err = b.saveSettings(settings)
+	if err != nil {
+		return ConnectionResult{}, err
+	}
+
+	if _, err := b.syncInventoryFromFiles(settings, files); err != nil {
+		return ConnectionResult{}, err
+	}
+
+	return ConnectionResult{
+		OK:           true,
+		Message:      msg(settings.Locale, "connection.success"),
+		AccountCount: len(files),
+		CheckedAt:    nowISO(),
+	}, nil
+}
+
+func (b *Backend) saveSettings(input AppSettings) (AppSettings, error) {
+	if input.Schedule.Enabled {
+		if err := validateScheduleSettings(input.Locale, input.Schedule); err != nil {
+			return input, err
+		}
+	}
+	if err := validateScanSettings(input.Locale, input.ScanStrategy, input.ScanBatchSize); err != nil {
+		return input, err
+	}
+	input = normalizeSettings(input, b.store.exportsDir)
 	settings, err := b.store.SaveSettings(input)
 	if err != nil {
 		return settings, err
+	}
+	if b.scheduler != nil {
+		b.scheduler.ApplySettings(settings)
 	}
 	b.emitLog("scan", "info", msg(settings.Locale, "settings.saved", stringOr(settings.BaseURL, "(empty)")))
 	return settings, nil
@@ -100,6 +183,10 @@ func (b *Backend) SyncInventory() (InventorySyncResult, error) {
 		return InventorySyncResult{}, err
 	}
 
+	return b.syncInventoryFromFiles(settings, files)
+}
+
+func (b *Backend) syncInventoryFromFiles(settings AppSettings, files []map[string]any) (InventorySyncResult, error) {
 	existing, err := b.store.LoadCurrentMap()
 	if err != nil {
 		return InventorySyncResult{}, err
@@ -137,6 +224,13 @@ func (b *Backend) SyncInventory() (InventorySyncResult, error) {
 	}
 	b.emitLog("scan", "info", msg(settings.Locale, "task.inventory.synced", filteredCount, len(records)))
 	return result, nil
+}
+
+func (b *Backend) GetSchedulerStatus() SchedulerStatus {
+	if b.scheduler == nil {
+		return SchedulerStatus{}
+	}
+	return b.scheduler.Status()
 }
 
 func (b *Backend) GetDashboardSummary() (DashboardSummary, error) {
@@ -237,7 +331,10 @@ func (b *Backend) beginTask(kind string, locale string) (context.Context, error)
 	defer b.mu.Unlock()
 
 	if b.cancelFunc != nil {
-		return nil, errors.New(msg(locale, "error.task_already_running", taskName(locale, b.activeKind)))
+		return nil, fmt.Errorf("%w", taskRunningError{
+			locale:     locale,
+			activeKind: b.activeKind,
+		})
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -290,6 +387,17 @@ func (b *Backend) emitProgress(kind string, phase string, current int, total int
 		Total:   total,
 		Message: message,
 		Done:    done,
+	})
+}
+
+func (b *Backend) emitTaskFinished(kind string, status string, message string) {
+	if b.emitter == nil {
+		return
+	}
+	b.emitter.Emit("task:finished", TaskFinished{
+		Kind:    kind,
+		Status:  status,
+		Message: message,
 	})
 }
 

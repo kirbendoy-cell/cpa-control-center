@@ -1,4 +1,6 @@
 export type LocaleCode = 'en-US' | 'zh-CN'
+export type ScheduleMode = 'scan' | 'maintain'
+export type ScanStrategy = 'full' | 'incremental'
 
 export type AccountStateKey =
   | 'pending'
@@ -16,6 +18,8 @@ export interface AppSettings {
   detailedLogs: boolean
   targetType: string
   provider: string
+  scanStrategy: ScanStrategy
+  scanBatchSize: number
   probeWorkers: number
   actionWorkers: number
   timeoutSeconds: number
@@ -25,6 +29,27 @@ export interface AppSettings {
   delete401: boolean
   autoReenable: boolean
   exportDirectory: string
+  schedule: ScheduleSettings
+}
+
+export interface ScheduleSettings {
+  enabled: boolean
+  mode: ScheduleMode
+  cron: string
+}
+
+export interface SchedulerStatus {
+  enabled: boolean
+  mode: ScheduleMode
+  cron: string
+  valid: boolean
+  validationMessage: string
+  running: boolean
+  nextRunAt: string
+  lastStartedAt: string
+  lastFinishedAt: string
+  lastStatus: string
+  lastMessage: string
 }
 
 export interface ConnectionResult {
@@ -184,6 +209,12 @@ export interface TaskProgress {
   total: number
   message: string
   done: boolean
+}
+
+export interface TaskFinished {
+  kind: 'scan' | 'maintain'
+  status: string
+  message: string
 }
 
 export interface LogEntry {
