@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Highlights
+
+- Added an in-app scheduler that can trigger recurring `Scan` or `Maintain` runs while the desktop app is open.
+- Added `Full` and `Incremental` scan modes with configurable incremental batch size.
+- Reduced large-pool setup pressure by merging connection validation and inventory sync into a single remote fetch during **Test & Save**.
+- Extended the settings UI with scheduler mode, cron expression, next-run status, last-run result details, and advanced parameter help popovers.
+- Adjusted task completion refresh handling so manual and scheduled runs refresh the UI once instead of duplicating large-pool reloads.
+
+### Notes
+
+- Scheduled tasks use local system time and standard 5-field cron expressions.
+- The scheduler does not replay missed runs after the app restarts.
+- Incremental scans prioritize `Pending` accounts first, then the oldest last-probed records.
+- The default retry count is now `3`.
+
 ## v1.1.0
 
 ### Highlights

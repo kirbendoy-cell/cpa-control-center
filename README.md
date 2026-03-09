@@ -6,7 +6,7 @@ Desktop operations tool for CPA-managed Codex auth pools.
 
 `CPA Control Center` packages the existing CPA management endpoints into a focused desktop app. It is designed for operators who do not want to manage auth pools through browser tabs, localhost pages, or terminal scripts once the pool grows large.
 
-You connect it to a CPA instance with a `Base URL` and a `Management Token`, then handle inventory sync, scanning, maintenance, logs, history, and exports from one native window.
+You connect it to a CPA instance with a `Base URL` and a `Management Token`, then handle inventory sync, scanning, maintenance, scheduler runs, logs, history, and exports from one native window.
 
 ## Acknowledgement and Intended Backend
 
@@ -18,9 +18,10 @@ You connect it to a CPA instance with a `Base URL` and a `Management Token`, the
 - Native desktop app built with Wails, Go, Vue 3, and TypeScript
 - Only requires `Base URL` and `Management Token`
 - Inventory-first startup flow for large pools
-- Backend pagination for accounts and scan details
+- Server-paged accounts and scan details
 - Unified state model: `Pending`, `Normal`, `401 Invalid`, `Quota Limited`, `Recovered`, `Error`
-- One-click scan and one-click maintenance
+- Scan modes: `Full` and `Incremental`
+- Built-in in-app scheduler for automatic `Scan` or `Maintain` tasks
 - Live task logs and scan history
 - CSV / JSON export for `401 Invalid` and `Quota Limited`
 - Built-in bilingual interface: English and Simplified Chinese
@@ -48,6 +49,7 @@ Large auth pools usually do not fail all at once. They drift into mixed operatio
 - some accounts hit quota limits
 - some accounts are temporarily probe-failed but recover on retry
 - some accounts were disabled earlier and are now recoverable
+- some accounts are known locally but have not been probed yet
 
 The app is built around two goals:
 
@@ -63,23 +65,21 @@ The current product flow is intentionally split into stages:
 3. Show the pool as tracked inventory even before the first scan.
 4. Run a scan when you want health states to be established.
 5. Run maintenance only after reviewing the latest scan result.
+6. Optionally enable the in-app scheduler for recurring scan or maintenance runs while the app is open.
 
 This matters for large pools. A first connection no longer needs to immediately probe thousands of accounts just to make the UI usable.
 
 ## First Connection Behavior
 
-After **Test & Save** succeeds, the app now performs a lightweight inventory sync:
-
-- it fetches auth files from CPA
-- stores the local inventory snapshot
-- marks newly seen records as `Pending`
-- makes the dashboard and account list usable before the first full scan
+After **Test & Save** succeeds, the app now performs a single remote inventory fetch that both validates the CPA connection and syncs the local inventory snapshot.
 
 That means:
 
+- the app no longer fetches the full auth list twice during first-time setup
+- newly seen records are marked as `Pending`
 - the dashboard can show tracked counts immediately
 - the account table is available immediately
-- health classification is incomplete until the first scan finishes
+- health classification is still incomplete until the first scan finishes
 
 ## State Model
 
@@ -103,7 +103,7 @@ You only need:
 - `Base URL`
 - `Management Token`
 
-The connection test itself does not trigger a scan.
+The connection test itself does not trigger probing, but **Test & Save** now also syncs the inventory snapshot so the UI becomes usable immediately.
 
 ### 2. Sync Inventory
 
@@ -124,6 +124,13 @@ When you click **Scan Now**, the app:
 4. writes the latest snapshot
 5. records a scan-history entry
 
+Two scan strategies are available:
+
+- `Full`: probe the entire filtered pool
+- `Incremental`: only probe one batch at a time, prioritizing `Pending` accounts first and then the oldest last-probed records
+
+`Incremental Batch Size` controls how many accounts a single incremental run will probe.
+
 ### 4. Run Maintenance
 
 When you click **Run Maintain**, the app first performs a fresh scan and then applies the configured rules:
@@ -133,6 +140,8 @@ When you click **Run Maintain**, the app first performs a fresh scan and then ap
 - re-enable recovered accounts
 
 All destructive operations require confirmation first.
+
+Maintenance always uses a fresh full scan. It does not use incremental batching.
 
 ### 5. Review History and Logs
 
@@ -145,7 +154,23 @@ The app keeps:
 
 If **Detailed Logs** is enabled, the task log also shows per-account scan and maintenance details.
 
-### 6. Export Problem Sets
+### 6. Schedule Automatic Tasks
+
+The app includes one built-in scheduler:
+
+- one global schedule per app instance
+- action mode can be `Scan` or `Maintain`
+- uses standard 5-field cron expressions in local system time
+- reloads immediately after you save settings
+- skips the run if another scan or maintenance task is already active
+
+Important scope limits:
+
+- scheduled tasks only run while the app is open
+- missed runs are not replayed after restart
+- the first version does not support multiple schedules or OS-level task integration
+
+### 7. Export Problem Sets
 
 You can export:
 
@@ -183,21 +208,26 @@ Formats:
 
 - CPA connection parameters
 - language switching
+- scan strategy and incremental batch size
 - concurrency and timeout settings
 - retry count
 - quota-handling strategy
+- in-app scheduler enable/mode/cron
 - export directory
 - detailed-log toggle
+- inline info popovers for advanced parameters
 
 ## Large Pool Notes
 
 The current implementation is designed to behave better on pools with thousands of auth files:
 
 - first connection performs inventory sync instead of immediate full probing
+- **Test & Save** validates the connection and syncs inventory in one remote fetch
 - dashboard no longer ships the full account list to the frontend
 - accounts use backend pagination
 - scan details use backend pagination
 - the app keeps `Pending` states for synced-but-unscanned records
+- `Incremental` scan mode can spread probing across multiple runs instead of hitting the entire pool at once
 
 This is not the final performance ceiling, but it is already a large step up from the earlier full-snapshot frontend model.
 
@@ -220,13 +250,16 @@ Pool health probing goes through CPA and targets:
 | --- | --- |
 | Locale | normalized system locale (`en-US` / `zh-CN`) |
 | Target type | `codex` |
+| Scan strategy | `full` |
+| Incremental batch size | `1000` |
 | Probe workers | `40` |
 | Action workers | `20` |
 | Timeout | `15s` |
-| Retries | `1` |
+| Retries | `3` |
 | Quota action | `disable` |
 | Delete 401 | enabled |
 | Auto re-enable recovered accounts | enabled |
+| Scheduler | disabled |
 | Detailed logs | disabled |
 
 ## Retry Model
@@ -261,16 +294,16 @@ The current implementation keeps the latest snapshot and the most recent `30` sc
 
 ```text
 cpa-control-center/
-├─ frontend/                     # Vue 3 + TypeScript frontend
-├─ internal/backend/             # CPA client, state store, task orchestration
-├─ build/                        # Wails build assets and platform packaging config
-├─ scripts/build-macos.sh        # macOS build helper
-├─ .github/workflows/            # CI / Release workflows
-├─ app.go                        # Wails binding layer
-├─ main.go                       # shared entry point
-├─ platform_options_windows.go   # Windows window configuration
-├─ platform_options_darwin.go    # macOS window configuration
-└─ wails.json                    # Wails project configuration
+|- frontend/                     # Vue 3 + TypeScript frontend
+|- internal/backend/             # CPA client, state store, task orchestration
+|- build/                        # Wails build assets and platform packaging config
+|- scripts/build-macos.sh        # macOS build helper
+|- .github/workflows/            # CI / Release workflows
+|- app.go                        # Wails binding layer
+|- main.go                       # shared entry point
+|- platform_options_windows.go   # Windows window configuration
+|- platform_options_darwin.go    # macOS window configuration
+`- wails.json                    # Wails project configuration
 ```
 
 ## Development and Build
@@ -307,6 +340,7 @@ bash ./scripts/build-macos.sh
 - Review the latest scan result before running maintenance.
 - If you are validating a new CPA environment, consider turning off `delete401` first.
 - Detailed logs are useful for troubleshooting, but they can become noisy on large pools.
+- On very large pools, prefer `Incremental` scan mode unless you intentionally want a full sweep.
 
 ## Current Scope
 
@@ -335,7 +369,11 @@ No. It is a focused desktop operations tool for auth-pool health and maintenance
 
 ### Why do I see tracked accounts before the first scan?
 
-Because the app now syncs inventory first. It can show tracked records immediately, while health states remain `Pending` until probing completes.
+Because the app syncs inventory first. It can show tracked records immediately, while health states remain `Pending` until probing completes.
+
+### What is the difference between `Full` and `Incremental` scan?
+
+`Full` scans the entire filtered pool. `Incremental` scans only one batch at a time, prioritizing unprobed accounts and then the oldest records. Incremental mode is useful for very large pools.
 
 ### Does “Run Maintain” scan first?
 
@@ -349,13 +387,16 @@ Yes. Scan details are paginated on the backend and are not loaded into the drawe
 
 Yes, but it is hidden. Press `Ctrl + Shift + D` to open the internal debug panel used for startup and dashboard troubleshooting.
 
+### Do scheduled tasks run while the app is closed?
+
+No. The built-in scheduler only runs while the desktop app is open. Missed runs are not replayed after restart.
+
 ### Is macOS supported?
 
 The build path is already in place. Production macOS artifacts should be generated on a Mac or a `macos-latest` GitHub Actions runner.
 
 ## Roadmap
 
-- scheduled tasks for automatic pool scanning and automatic maintenance
 - configurable threshold-based rules, for example disabling accounts once they fall below a defined percentage
 - support more auth-channel maintenance
 - add richer statistics and trend views
