@@ -163,3 +163,50 @@ func TestStoreSettingsAndHistory(t *testing.T) {
 		t.Fatalf("unexpected paged detail: %+v", paged)
 	}
 }
+
+func TestSaveScanRecordsHandlesDuplicateNamesWithinRun(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	defer store.Close()
+
+	runID, err := store.StartScanRun(defaultSettings(store.exportsDir))
+	if err != nil {
+		t.Fatalf("StartScanRun: %v", err)
+	}
+
+	first := AccountRecord{
+		Name:      "duplicate.json",
+		Type:      "codex",
+		Provider:  "codex",
+		State:     statePending,
+		StateKey:  statePending,
+		UpdatedAt: nowISO(),
+	}
+	second := first
+	second.State = stateNormal
+	second.StateKey = stateNormal
+	second.StatusMessage = "latest"
+	second.UpdatedAt = nowISO()
+
+	if err := store.SaveScanRecords(runID, []AccountRecord{first, second}); err != nil {
+		t.Fatalf("SaveScanRecords with duplicate names: %v", err)
+	}
+
+	detail, err := store.GetScanDetails(runID)
+	if err != nil {
+		t.Fatalf("GetScanDetails: %v", err)
+	}
+	if len(detail.Records) != 1 {
+		t.Fatalf("expected 1 deduplicated record, got %d", len(detail.Records))
+	}
+	if detail.Records[0].StateKey != stateNormal {
+		t.Fatalf("expected latest record state %q, got %q", stateNormal, detail.Records[0].StateKey)
+	}
+	if detail.Records[0].StatusMessage != "latest" {
+		t.Fatalf("expected latest record payload to win, got %+v", detail.Records[0])
+	}
+}

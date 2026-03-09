@@ -544,7 +544,12 @@ func (s *Store) SaveScanRecords(runID int64, records []AccountRecord) error {
 		}
 		if _, err := tx.Exec(
 			`INSERT INTO scan_records (run_id, name, provider, account_type, state_key, data_json)
-			VALUES (?, ?, ?, ?, ?, ?)`,
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT(run_id, name) DO UPDATE SET
+				provider = excluded.provider,
+				account_type = excluded.account_type,
+				state_key = excluded.state_key,
+				data_json = excluded.data_json`,
 			runID,
 			record.Name,
 			record.Provider,
