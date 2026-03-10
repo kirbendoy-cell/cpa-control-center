@@ -8,6 +8,8 @@ All notable changes to this project will be documented in this file.
 
 ### Highlights
 
+- Added configurable skipping for known `401` responses so scans can avoid repeatedly reprocessing accounts that are already known to fail with unauthorized results.
+- Improved scan record persistence by upserting duplicate records within the same run instead of producing conflicting duplicates.
 - Rebuilt the desktop shell into window-driven `wide`, `desktop`, and `compact` layout modes so the app now expands on large screens and stays readable on smaller windows without the old fixed-canvas scaling behavior.
 - Reworked the dashboard, sidebar, account/log/settings layouts, and scan detail drawer to follow the new shell modes with tighter compact layouts and better internal scrolling behavior.
 - Updated the pool health donut to size from its container, keep the chart centered across shell modes, and stay stable during first render and resize changes.
@@ -15,6 +17,8 @@ All notable changes to this project will be documented in this file.
 
 ### Notes
 
+- Known `401` skip behavior is now configurable instead of being hard-wired into scan handling.
+- Scan result storage is more resilient when the same account record is encountered multiple times during one run.
 - The app no longer relies on whole-window scale transforms for primary layout behavior.
 - Smaller screens now prioritize vertical scrolling and readable panel density over fitting the entire dashboard into a single static viewport.
 - Startup window sizing uses the operating system work area when available, so the first window should open closer to the best usable size on both Windows and macOS.
