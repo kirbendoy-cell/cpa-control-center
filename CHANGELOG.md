@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## v1.3.0
+
+### Highlights
+
+- Rebuilt the desktop shell into window-driven `wide`, `desktop`, and `compact` layout modes so the app now expands on large screens and stays readable on smaller windows without the old fixed-canvas scaling behavior.
+- Reworked the dashboard, sidebar, account/log/settings layouts, and scan detail drawer to follow the new shell modes with tighter compact layouts and better internal scrolling behavior.
+- Updated the pool health donut to size from its container, keep the chart centered across shell modes, and stay stable during first render and resize changes.
+- Changed startup window sizing on Windows and macOS to prefer the best desktop size while shrinking to the current screen work area when the display is smaller.
+
+### Notes
+
+- The app no longer relies on whole-window scale transforms for primary layout behavior.
+- Smaller screens now prioritize vertical scrolling and readable panel density over fitting the entire dashboard into a single static viewport.
+- Startup window sizing uses the operating system work area when available, so the first window should open closer to the best usable size on both Windows and macOS.
+
 ## v1.2.0
 
 ### Highlights
