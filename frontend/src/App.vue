@@ -1,10 +1,15 @@
 <script lang="ts" setup>
-import { computed, nextTick, onErrorCaptured, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onErrorCaptured, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { ElConfigProvider, ElMessage, ElOption, ElSelect } from 'element-plus'
 import type { Language } from 'element-plus/es/locale'
 import en from 'element-plus/es/locale/lang/en'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
-import { ClipboardSetText, WindowSetLightTheme } from '../wailsjs/runtime/runtime'
+import {
+  ClipboardSetText,
+  ScreenGetAll,
+  WindowSetLightTheme,
+  WindowSetMinSize,
+} from '../wailsjs/runtime/runtime'
 import { useAccountsStore } from '@/stores/accounts'
 import { useSettingsStore } from '@/stores/settings'
 import { useTasksStore } from '@/stores/tasks'
@@ -18,6 +23,7 @@ import DashboardView from '@/views/DashboardView.vue'
 import AccountsView from '@/views/AccountsView.vue'
 import LogsView from '@/views/LogsView.vue'
 import SettingsView from '@/views/SettingsView.vue'
+import { resolveShellMode, shellModeKey, type ShellMode } from '@/layout/shell'
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
@@ -30,7 +36,16 @@ const shellRevision = ref(0)
 const viewRevision = ref(0)
 const debugVisible = ref(false)
 const debugEntries = ref<DebugEntry[]>([])
+const appViewport = ref<HTMLDivElement | null>(null)
 let debugListenersBound = false
+let viewportObserver: ResizeObserver | null = null
+
+const safeMinWidth = 1280
+const safeMinHeight = 720
+const startupFallbackMinWidth = 720
+const startupFallbackMinHeight = 480
+const viewportWidth = ref(window.innerWidth)
+const viewportHeight = ref(window.innerHeight)
 
 const navItems = computed<Array<{ key: ViewKey; label: string; caption: string }>>(() => [
   { key: 'dashboard', label: t('nav.dashboard'), caption: t('nav.dashboardCaption') },
@@ -81,6 +96,16 @@ const safeDebugEntries = computed(() => (
   Array.isArray(debugEntries.value) ? debugEntries.value : []
 ))
 
+const shellMode = computed<ShellMode>(() => resolveShellMode(viewportWidth.value, viewportHeight.value))
+
+const shellClasses = computed(() => ({
+  'app-shell--wide': shellMode.value === 'wide',
+  'app-shell--desktop': shellMode.value === 'desktop',
+  'app-shell--compact': shellMode.value === 'compact',
+}))
+
+provide(shellModeKey, shellMode)
+
 async function refreshShell() {
   await nextTick()
   await new Promise<void>((resolve) => {
@@ -92,6 +117,29 @@ async function refreshShell() {
 
 function appendDebug(entry: DebugEntry) {
   debugEntries.value = [entry, ...debugEntries.value].slice(0, 120)
+}
+
+function updateViewportMetrics() {
+  if (!appViewport.value) {
+    return
+  }
+  viewportWidth.value = Math.max(appViewport.value.clientWidth, 1)
+  viewportHeight.value = Math.max(appViewport.value.clientHeight, 1)
+}
+
+function bindViewportObserver() {
+  if (!appViewport.value || viewportObserver) {
+    return
+  }
+  viewportObserver = new ResizeObserver(() => {
+    updateViewportMetrics()
+  })
+  viewportObserver.observe(appViewport.value)
+}
+
+function unbindViewportObserver() {
+  viewportObserver?.disconnect()
+  viewportObserver = null
 }
 
 function mergeBufferedDebug(entries: DebugEntry[]) {
@@ -190,13 +238,42 @@ async function changeLocale(locale: string) {
   }
 }
 
+async function calibrateWindowToScreen() {
+  try {
+    const screens = await ScreenGetAll()
+    const screen = screens.find((item) => item.isCurrent) ?? screens.find((item) => item.isPrimary) ?? screens[0]
+    if (!screen) {
+      return
+    }
+
+    const availableWidth = Math.max(
+      screen.width - 32,
+      Math.min(startupFallbackMinWidth, screen.width),
+    )
+    const availableHeight = Math.max(
+      screen.height - 96,
+      Math.min(startupFallbackMinHeight, screen.height),
+    )
+    const minWidth = Math.min(safeMinWidth, availableWidth)
+    const minHeight = Math.min(safeMinHeight, availableHeight)
+
+    WindowSetMinSize(minWidth, minHeight)
+  } catch (error) {
+    emitDebugError('app', 'window calibration failed', error)
+  }
+}
+
 onMounted(async () => {
   window.addEventListener('keydown', onDebugHotkey)
   window.addEventListener('error', onWindowError)
   window.addEventListener('unhandledrejection', onUnhandledRejection)
+  updateViewportMetrics()
+  bindViewportObserver()
   emitDebug('app', 'startup begin')
   try {
     WindowSetLightTheme()
+    await calibrateWindowToScreen()
+    updateViewportMetrics()
     await settingsStore.loadSettings()
     settingsStore.initSchedulerBridge()
     emitDebug('app', 'settings loaded', {
@@ -245,6 +322,7 @@ onUnmounted(() => {
   tasksStore.destroyEventBridge()
   settingsStore.destroySchedulerBridge()
   setDebugEnabled(false)
+  unbindViewportObserver()
   unbindDebugListeners()
   window.removeEventListener('keydown', onDebugHotkey)
   window.removeEventListener('error', onWindowError)
@@ -298,69 +376,74 @@ watch(debugVisible, (visible) => {
 
 <template>
   <el-config-provider :locale="elementLocale">
-    <div :key="shellRevision" class="app-shell">
-      <aside class="app-sidebar">
-        <div>
-          <p class="sidebar-kicker">{{ t('app.name') }}</p>
-          <h1>{{ t('app.headline') }}</h1>
-          <p class="sidebar-copy">
-            {{ t('app.copy') }}
-          </p>
-        </div>
-
-        <nav class="nav-list">
-          <button
-            v-for="item in navItems"
-            :key="item.key"
-            class="nav-item"
-            :class="{ 'nav-item--active': item.key === activeView }"
-            @click="activeView = item.key"
-          >
-            <strong>{{ item.label }}</strong>
-            <span>{{ item.caption }}</span>
-          </button>
-        </nav>
-      </aside>
-
-      <main class="app-main">
-        <header class="topbar">
-          <div class="topbar-status">
-            <span class="status-dot" :data-tone="settingsStore.connectionTone" />
-            <div>
-              <strong>{{ connectionLabel }}</strong>
-              <p>{{ settingsStore.settings.baseUrl || t('topbar.endpointHint') }}</p>
-            </div>
+    <div
+      ref="appViewport"
+      class="app-viewport"
+    >
+      <div :key="shellRevision" class="app-shell" :class="shellClasses">
+        <aside class="app-sidebar">
+          <div>
+            <p class="sidebar-kicker">{{ t('app.name') }}</p>
+            <h1>{{ t('app.headline') }}</h1>
+            <p class="sidebar-copy">
+              {{ t('app.copy') }}
+            </p>
           </div>
-          <div class="topbar-meta">
-            <span>{{ t('topbar.tracked', { count: accountsStore.summary.filteredAccounts }) }}</span>
-            <span>{{ lastScanText }}</span>
-            <el-select
-              class="locale-switcher"
-              :model-value="settingsStore.currentLocale"
-              size="small"
-              @change="changeLocale"
+
+          <nav class="nav-list">
+            <button
+              v-for="item in navItems"
+              :key="item.key"
+              class="nav-item"
+              :class="{ 'nav-item--active': item.key === activeView }"
+              @click="activeView = item.key"
             >
-              <el-option :label="t('topbar.english')" value="en-US" />
-              <el-option :label="t('topbar.chinese')" value="zh-CN" />
-            </el-select>
-          </div>
-        </header>
+              <strong>{{ item.label }}</strong>
+              <span>{{ item.caption }}</span>
+            </button>
+          </nav>
+        </aside>
 
-        <section v-if="!appReady" class="view-shell view-shell--settings">
-          <article class="panel panel--fill">
-            <div class="panel-head">
+        <main class="app-main">
+          <header class="topbar">
+            <div class="topbar-status">
+              <span class="status-dot" :data-tone="settingsStore.connectionTone" />
               <div>
-                <p class="panel-kicker">{{ t('app.name') }}</p>
-                <h3>{{ t('common.loading') }}</h3>
+                <strong>{{ connectionLabel }}</strong>
+                <p>{{ settingsStore.settings.baseUrl || t('topbar.endpointHint') }}</p>
               </div>
             </div>
-            <div class="panel__body muted">
-              {{ t('settings.notTestedYet') }}
+            <div class="topbar-meta">
+              <span>{{ t('topbar.tracked', { count: accountsStore.summary.filteredAccounts }) }}</span>
+              <span>{{ lastScanText }}</span>
+              <el-select
+                class="locale-switcher"
+                :model-value="settingsStore.currentLocale"
+                size="small"
+                @change="changeLocale"
+              >
+                <el-option :label="t('topbar.english')" value="en-US" />
+                <el-option :label="t('topbar.chinese')" value="zh-CN" />
+              </el-select>
             </div>
-          </article>
-        </section>
-        <component v-else :is="activeComponent" :key="`${activeView}-${viewRevision}`" />
-      </main>
+          </header>
+
+          <section v-if="!appReady" class="view-shell view-shell--settings">
+            <article class="panel panel--fill">
+              <div class="panel-head">
+                <div>
+                  <p class="panel-kicker">{{ t('app.name') }}</p>
+                  <h3>{{ t('common.loading') }}</h3>
+                </div>
+              </div>
+              <div class="panel__body muted">
+                {{ t('settings.notTestedYet') }}
+              </div>
+            </article>
+          </section>
+          <component v-else :is="activeComponent" :key="`${activeView}-${viewRevision}`" />
+        </main>
+      </div>
 
       <aside v-if="debugVisible" class="debug-panel">
         <div class="debug-panel__header">
@@ -382,6 +465,7 @@ watch(debugVisible, (visible) => {
           <div><strong>pending</strong><span>{{ accountsStore.summary.pendingCount }}</span></div>
           <div><strong>history</strong><span>{{ safeHistoryCount }}</span></div>
           <div><strong>page</strong><span>{{ safeRecordCount }}/{{ accountsStore.totalRecords }}</span></div>
+          <div><strong>mode</strong><span>{{ shellMode }}</span></div>
           <div><strong>rev</strong><span>{{ shellRevision }}/{{ viewRevision }}</span></div>
         </div>
 

@@ -8,10 +8,11 @@ import {
 } from 'echarts/components'
 import { getInstanceByDom, init, use, type ComposeOption, type ECharts } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
+import { computed, inject, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { DashboardSummary } from '@/types'
 import { emitDebug, emitDebugError } from '@/utils/debug'
+import { resolveDonutLayoutMode, shellModeKey, type ShellMode } from '@/layout/shell'
 
 use([PieChart, TitleComponent, TooltipComponent, CanvasRenderer])
 
@@ -38,6 +39,7 @@ const shell = ref<HTMLDivElement | null>(null)
 const chartRoot = ref<HTMLDivElement | null>(null)
 const shellWidth = ref(0)
 const shellHeight = ref(0)
+const injectedShellMode = inject(shellModeKey, null)
 let chart: ECharts | null = null
 let resizeObserver: ResizeObserver | null = null
 let renderFrame = 0
@@ -65,28 +67,31 @@ const displayItems = computed<DonutItem[]>(() => {
   ]
 })
 
-const layoutMode = computed(() => {
-  const width = shellWidth.value
-  const height = shellHeight.value
-
-  return {
-    compact: width < 420 || height < 250,
-    stacked: width < 360 || height < 220,
-    tiny: width < 310 || height < 195,
-  }
-})
+const shellMode = computed<ShellMode>(() => injectedShellMode?.value ?? 'desktop')
+const layoutMode = computed<ShellMode>(() => resolveDonutLayoutMode(shellMode.value, shellWidth.value, shellHeight.value))
 
 const shellStyle = computed(() => ({
-  '--donut-gap': layoutMode.value.tiny ? '0.52rem' : layoutMode.value.compact ? '0.65rem' : '0.8rem',
+  '--donut-gap': layoutMode.value === 'compact' ? '0.62rem' : layoutMode.value === 'wide' ? '0.92rem' : '0.78rem',
 }))
 
+const chartPixelSize = computed(() => {
+  const width = shellWidth.value
+  const height = shellHeight.value
+  const baseSize = layoutMode.value === 'wide' ? 230 : layoutMode.value === 'desktop' ? 204 : 172
+  const horizontalBudget = Math.max(148, width - (layoutMode.value === 'compact' ? 28 : 48))
+  const verticalReserve = layoutMode.value === 'compact' ? 118 : 146
+  const verticalBudget = Math.max(148, height - verticalReserve)
+
+  return `${Math.max(148, Math.min(baseSize, horizontalBudget, verticalBudget))}px`
+})
+
 const chartStyle = computed(() => ({
-  '--donut-chart-size': layoutMode.value.tiny ? '152px' : layoutMode.value.compact ? '176px' : '210px',
+  '--donut-chart-size': chartPixelSize.value,
 }))
 
 const legendColumns = computed(() => {
   const total = Math.max(displayItems.value.length, 1)
-  if (layoutMode.value.stacked) {
+  if (layoutMode.value === 'compact' || shellWidth.value < 380) {
     return 1
   }
   return Math.min(total, 2)
@@ -94,27 +99,29 @@ const legendColumns = computed(() => {
 
 const legendStyle = computed(() => ({
   gridTemplateColumns: `repeat(${legendColumns.value}, minmax(0, 1fr))`,
-  '--legend-gap': layoutMode.value.tiny ? '0.5rem' : layoutMode.value.compact ? '0.58rem' : '0.7rem',
-  '--legend-item-padding': layoutMode.value.tiny ? '0.52rem 0.62rem' : layoutMode.value.compact ? '0.58rem 0.72rem' : '0.68rem 0.82rem',
-  '--legend-name-size': layoutMode.value.tiny ? '0.76rem' : layoutMode.value.compact ? '0.82rem' : '0.88rem',
-  '--legend-value-size': layoutMode.value.tiny ? '0.95rem' : layoutMode.value.compact ? '1.02rem' : '1.14rem',
-  '--legend-swatch-size': layoutMode.value.tiny ? '10px' : '12px',
+  '--legend-gap': layoutMode.value === 'compact' ? '0.56rem' : layoutMode.value === 'wide' ? '0.78rem' : '0.66rem',
+  '--legend-item-padding': layoutMode.value === 'compact' ? '0.56rem 0.68rem' : layoutMode.value === 'wide' ? '0.72rem 0.88rem' : '0.64rem 0.78rem',
+  '--legend-name-size': layoutMode.value === 'compact' ? '0.8rem' : layoutMode.value === 'wide' ? '0.9rem' : '0.85rem',
+  '--legend-value-size': layoutMode.value === 'compact' ? '1rem' : layoutMode.value === 'wide' ? '1.2rem' : '1.08rem',
+  '--legend-swatch-size': layoutMode.value === 'compact' ? '10px' : '12px',
+  '--legend-max-width': layoutMode.value === 'wide' ? '420px' : layoutMode.value === 'compact' ? '100%' : '388px',
 }))
 
 function chartMetrics(width: number, height: number) {
   const basis = Math.min(width, height)
-  const compact = basis < 150
-  const dense = basis < 130
+  const compact = layoutMode.value === 'compact' || basis < 168
+  const dense = basis < 144
+  const wide = layoutMode.value === 'wide' && !compact
 
   return {
-    radius: dense ? ['63%', '83%'] : compact ? ['65%', '85%'] : ['67%', '87%'],
+    radius: dense ? ['62%', '82%'] : compact ? ['64%', '84%'] : wide ? ['69%', '88%'] : ['66%', '86%'],
     center: ['50%', '47%'],
     titleTop: dense ? '38%' : '39%',
     subTitleTop: dense ? '55%' : '54%',
-    titleSize: dense ? 16 : compact ? 19 : 26,
-    subTitleSize: dense ? 8 : 10,
+    titleSize: dense ? 16 : compact ? 19 : wide ? 28 : 23,
+    subTitleSize: dense ? 8 : wide ? 11 : 10,
     borderWidth: dense ? 3 : 4,
-    emphasisScale: dense ? 4 : 6,
+    emphasisScale: dense ? 4 : wide ? 7 : 5,
   }
 }
 
@@ -229,11 +236,6 @@ function queueRender() {
   })
 }
 
-function handleResize() {
-  updateBounds()
-  queueRender()
-}
-
 watch([items, () => props.summary.filteredAccounts], async () => {
   await nextTick()
   queueRender()
@@ -243,24 +245,19 @@ onMounted(() => {
   emitDebug('summary-donut', 'mounted')
   updateBounds()
   queueRender()
-  window.addEventListener('resize', handleResize)
-  if (shell.value || chartRoot.value) {
+  if (shell.value) {
     resizeObserver = new ResizeObserver(() => {
       updateBounds()
       queueRender()
     })
-    if (shell.value) {
-      resizeObserver.observe(shell.value)
-    }
-    if (chartRoot.value) {
-      resizeObserver.observe(chartRoot.value)
-    }
+    resizeObserver.observe(shell.value)
   }
 })
 
 onActivated(() => {
   emitDebug('summary-donut', 'activated')
-  handleResize()
+  updateBounds()
+  queueRender()
 })
 
 onDeactivated(() => {
@@ -273,7 +270,6 @@ onDeactivated(() => {
 
 onBeforeUnmount(() => {
   emitDebug('summary-donut', 'before unmount')
-  window.removeEventListener('resize', handleResize)
   resizeObserver?.disconnect()
   resizeObserver = null
   if (renderFrame) {
@@ -290,9 +286,9 @@ onBeforeUnmount(() => {
     ref="shell"
     class="summary-donut"
     :class="{
-      'summary-donut--compact': layoutMode.compact,
-      'summary-donut--stacked': layoutMode.stacked,
-      'summary-donut--tiny': layoutMode.tiny,
+      'summary-donut--wide': layoutMode === 'wide',
+      'summary-donut--desktop': layoutMode === 'desktop',
+      'summary-donut--compact': layoutMode === 'compact',
     }"
     :style="shellStyle"
   >
@@ -313,23 +309,25 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--donut-gap, 0.9rem);
+  gap: var(--donut-gap, 0.8rem);
   width: 100%;
   height: 100%;
   min-height: 0;
   margin: 0 auto;
+  padding: 0.1rem 0 0.35rem;
 }
 
 .summary-donut__chart {
   width: var(--donut-chart-size, 204px);
   height: var(--donut-chart-size, 204px);
   flex: none;
+  margin-inline: auto;
 }
 
 .summary-donut__legend {
   display: grid;
   gap: var(--legend-gap, 0.75rem);
-  width: min(100%, 380px);
+  width: min(100%, var(--legend-max-width, 388px));
   align-content: start;
 }
 
@@ -371,15 +369,13 @@ onBeforeUnmount(() => {
   line-height: 1;
 }
 
-.summary-donut--stacked .summary-donut__legend {
+.summary-donut--compact .summary-donut__legend {
+  align-self: stretch;
   width: 100%;
-}
-
-.summary-donut--stacked .summary-donut__legend {
   grid-template-columns: 1fr !important;
 }
 
-.summary-donut--tiny .summary-donut__legend-item {
-  border-radius: 14px;
+.summary-donut--wide .summary-donut__legend-item {
+  border-radius: 18px;
 }
 </style>

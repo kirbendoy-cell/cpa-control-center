@@ -1,10 +1,14 @@
 <script setup lang="ts">
+import { computed, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { LogEntry } from '@/types'
 import { formatDateTime } from '@/utils/format'
 import { logKindLabel, logLevelLabel } from '@/utils/status'
+import { shellModeKey } from '@/layout/shell'
 
 const { t } = useI18n()
+const injectedShellMode = inject(shellModeKey, null)
+const shellMode = computed(() => injectedShellMode?.value ?? 'desktop')
 
 defineProps<{
   entries: LogEntry[]
@@ -12,7 +16,7 @@ defineProps<{
 </script>
 
 <template>
-  <div class="log-console">
+  <div class="log-console" :class="{ 'log-console--compact': shellMode === 'compact' }">
     <div v-if="entries.length === 0" class="log-empty">
       {{ t('logs.empty') }}
     </div>
@@ -58,11 +62,13 @@ defineProps<{
   background: rgba(103, 232, 249, 0.06);
 }
 
-@media (max-width: 900px) {
-  .log-row {
-    grid-template-columns: 1fr;
-    gap: 0.2rem;
-  }
+.log-console--compact {
+  padding: 0.85rem;
+}
+
+.log-console--compact .log-row {
+  grid-template-columns: 1fr;
+  gap: 0.2rem;
 }
 
 .log-time {

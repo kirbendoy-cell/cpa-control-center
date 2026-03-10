@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, watch, ref } from 'vue'
+import { computed, inject, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   ElButton,
   ElDrawer,
@@ -19,6 +19,7 @@ import { formatDateTime } from '@/utils/format'
 import { toErrorMessage } from '@/utils/errors'
 import { quotaActionLabel, taskStatusLabel } from '@/utils/status'
 import { emitDebug, emitDebugError } from '@/utils/debug'
+import { resolveDashboardDrawerSize, shellModeKey, type ShellMode } from '@/layout/shell'
 
 const { t } = useI18n()
 const accountsStore = useAccountsStore()
@@ -30,10 +31,13 @@ const detailRunId = ref<number | null>(null)
 const detailPage = ref(1)
 const detailPageSize = ref(20)
 const detailPageSizes = [20, 50, 100]
+const injectedShellMode = inject(shellModeKey, null)
 
 const scanDetailSummary = computed(() => accountsStore.scanDetail?.summary ?? null)
 const scanDetailRecords = computed(() => accountsStore.scanDetail?.records ?? [])
 const scanDetailTotal = computed(() => accountsStore.scanDetail?.totalRecords ?? 0)
+const shellMode = computed<ShellMode>(() => injectedShellMode?.value ?? 'desktop')
+const drawerSize = computed(() => resolveDashboardDrawerSize(shellMode.value))
 
 const scanDetailStatusState = computed(() => {
   const status = scanDetailSummary.value?.status?.toLowerCase() || ''
@@ -261,9 +265,9 @@ function changeDetailPageSize(pageSize: number) {
 
     <el-drawer
       v-model="drawerOpen"
-      class="scan-detail-drawer"
+      :class="['scan-detail-drawer', `scan-detail-drawer--${shellMode}`]"
       modal-class="scan-detail-overlay"
-      size="min(1120px, 78vw)"
+      :size="drawerSize"
       @closed="detailRunId = null"
     >
       <template #header>
