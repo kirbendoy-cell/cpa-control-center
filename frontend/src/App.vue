@@ -11,6 +11,7 @@ import {
   WindowSetMinSize,
 } from '../wailsjs/runtime/runtime'
 import { useAccountsStore } from '@/stores/accounts'
+import { useQuotasStore } from '@/stores/quotas'
 import { useSettingsStore } from '@/stores/settings'
 import { useTasksStore } from '@/stores/tasks'
 import type { ViewKey } from '@/types'
@@ -18,9 +19,11 @@ import { useI18n } from 'vue-i18n'
 import { formatDateTime } from '@/utils/format'
 import { localeChinese } from '@/utils/locale'
 import { toErrorMessage } from '@/utils/errors'
+import { cronMatchesDate, isValidCronExpression } from '@/utils/settings'
 import { debugEventName, emitDebug, emitDebugError, setDebugEnabled, snapshotDebugEntries, type DebugEntry } from '@/utils/debug'
 import DashboardView from '@/views/DashboardView.vue'
 import AccountsView from '@/views/AccountsView.vue'
+import QuotasView from '@/views/QuotasView.vue'
 import LogsView from '@/views/LogsView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import { resolveShellMode, shellModeKey, type ShellMode } from '@/layout/shell'
@@ -28,6 +31,7 @@ import { resolveShellMode, shellModeKey, type ShellMode } from '@/layout/shell'
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
 const accountsStore = useAccountsStore()
+const quotasStore = useQuotasStore()
 const tasksStore = useTasksStore()
 
 const activeView = ref<ViewKey>('dashboard')
@@ -39,6 +43,8 @@ const debugEntries = ref<DebugEntry[]>([])
 const appViewport = ref<HTMLDivElement | null>(null)
 let debugListenersBound = false
 let viewportObserver: ResizeObserver | null = null
+let quotaAutoRefreshTimer: number | null = null
+let lastQuotaAutoRefreshKey = ''
 
 const safeMinWidth = 1280
 const safeMinHeight = 720
@@ -50,6 +56,7 @@ const viewportHeight = ref(window.innerHeight)
 const navItems = computed<Array<{ key: ViewKey; label: string; caption: string }>>(() => [
   { key: 'dashboard', label: t('nav.dashboard'), caption: t('nav.dashboardCaption') },
   { key: 'accounts', label: t('nav.accounts'), caption: t('nav.accountsCaption') },
+  { key: 'quotas', label: t('nav.quotas'), caption: t('nav.quotasCaption') },
   { key: 'logs', label: t('nav.logs'), caption: t('nav.logsCaption') },
   { key: 'settings', label: t('nav.settings'), caption: t('nav.settingsCaption') },
 ])
@@ -58,6 +65,8 @@ const activeComponent = computed(() => {
   switch (activeView.value) {
     case 'accounts':
       return AccountsView
+    case 'quotas':
+      return QuotasView
     case 'logs':
       return LogsView
     case 'settings':
@@ -140,6 +149,57 @@ function bindViewportObserver() {
 function unbindViewportObserver() {
   viewportObserver?.disconnect()
   viewportObserver = null
+}
+
+function stopQuotaAutoRefresh() {
+  if (quotaAutoRefreshTimer !== null) {
+    window.clearInterval(quotaAutoRefreshTimer)
+    quotaAutoRefreshTimer = null
+  }
+}
+
+function minuteKey(date: Date) {
+  return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}-${date.getHours()}-${date.getMinutes()}`
+}
+
+function tryQuotaAutoRefresh(now = new Date()) {
+  const settings = settingsStore.settings
+  const cron = settings.quotaAutoRefreshCron.trim()
+  if (!settings.quotaAutoRefreshEnabled || !cron || !isValidCronExpression(cron)) {
+    return
+  }
+  if (!settings.baseUrl || !settings.managementToken) {
+    return
+  }
+  if (quotasStore.loading || tasksStore.hasActiveTask) {
+    return
+  }
+  const currentMinuteKey = minuteKey(now)
+  if (lastQuotaAutoRefreshKey === currentMinuteKey) {
+    return
+  }
+  if (!cronMatchesDate(cron, now)) {
+    return
+  }
+  lastQuotaAutoRefreshKey = currentMinuteKey
+  emitDebug('quota', 'auto refresh triggered', { cron, minute: currentMinuteKey })
+  void quotasStore.refreshSnapshot().catch((error) => {
+    emitDebugError('quota', 'auto refresh failed', error)
+  })
+}
+
+function syncQuotaAutoRefresh() {
+  stopQuotaAutoRefresh()
+  lastQuotaAutoRefreshKey = ''
+  const settings = settingsStore.settings
+  const cron = settings.quotaAutoRefreshCron.trim()
+  if (!settings.quotaAutoRefreshEnabled || !cron || !isValidCronExpression(cron)) {
+    return
+  }
+  quotaAutoRefreshTimer = window.setInterval(() => {
+    tryQuotaAutoRefresh()
+  }, 15000)
+  tryQuotaAutoRefresh()
 }
 
 function mergeBufferedDebug(entries: DebugEntry[]) {
@@ -295,6 +355,7 @@ onMounted(async () => {
       emitDebug('app', 'inventory sync queued during startup')
       tasksStore.scheduleInventorySync()
     }
+    syncQuotaAutoRefresh()
     await refreshShell()
     appReady.value = true
     emitDebug('app', 'startup complete', {
@@ -312,6 +373,7 @@ onMounted(async () => {
 onUnmounted(() => {
   tasksStore.destroyEventBridge()
   settingsStore.destroySchedulerBridge()
+  stopQuotaAutoRefresh()
   setDebugEnabled(false)
   unbindViewportObserver()
   unbindDebugListeners()
@@ -333,8 +395,23 @@ onErrorCaptured((error, instance, info) => {
 })
 
 watch(activeView, (value) => {
+  if (value !== 'quotas' && quotasStore.error) {
+    quotasStore.error = ''
+  }
   emitDebug('app', 'active view changed', { value })
 })
+
+watch(
+  () => [
+    settingsStore.settings.quotaAutoRefreshEnabled,
+    settingsStore.settings.quotaAutoRefreshCron,
+    settingsStore.settings.baseUrl,
+    settingsStore.settings.managementToken,
+  ],
+  () => {
+    syncQuotaAutoRefresh()
+  },
+)
 
 watch(debugVisible, (visible) => {
   setDebugEnabled(visible)

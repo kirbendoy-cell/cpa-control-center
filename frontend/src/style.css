@@ -1153,6 +1153,26 @@ select {
   margin: 1rem 0 1.5rem;
 }
 
+.settings-toggles--quota {
+  margin: 0.35rem 0 0;
+}
+
+.settings-toggle-group {
+  display: grid;
+  gap: 0.8rem;
+  min-width: 0;
+}
+
+.settings-plan-switches {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.8rem 1rem;
+}
+
+.settings-plan-switches .el-switch {
+  min-width: 0;
+}
+
 .settings-schedule {
   display: grid;
   gap: 0.9rem;
@@ -1322,6 +1342,7 @@ select {
 }
 
 .view-shell--accounts,
+.view-shell--quotas,
 .view-shell--settings {
   grid-template-rows: minmax(0, 1fr);
 }
@@ -1853,6 +1874,191 @@ select {
   min-width: min(100%, 360px);
 }
 
+.view-shell--quotas {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  overflow: auto;
+}
+
+.quota-hero {
+  align-items: stretch;
+  min-height: 132px;
+}
+
+.quota-hero__actions {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 0.75rem;
+  flex: 0 1 320px;
+  width: min(100%, 320px);
+  min-width: 240px;
+}
+
+.quota-hero__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.2rem;
+  text-align: right;
+}
+
+.quota-hero__actions .el-button {
+  align-self: flex-end;
+  margin-top: auto;
+}
+
+.quota-callout {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 1rem 1.05rem;
+}
+
+.quota-callout--warning {
+  border-color: rgba(194, 112, 12, 0.16);
+  background: linear-gradient(180deg, rgba(255, 248, 239, 0.98), rgba(247, 236, 219, 0.98));
+}
+
+.quota-callout--error {
+  border-color: rgba(180, 83, 9, 0.18);
+  background: linear-gradient(180deg, rgba(255, 245, 240, 0.98), rgba(248, 232, 219, 0.98));
+}
+
+.quota-empty-state {
+  display: grid;
+  min-height: 360px;
+  place-items: center;
+}
+
+.quota-empty-state__body {
+  display: grid;
+  justify-items: center;
+  gap: 1rem;
+  text-align: center;
+}
+
+.quota-empty-state__body strong {
+  color: var(--ink);
+  font-size: clamp(2rem, 4vw, 3rem);
+  line-height: 1.08;
+  letter-spacing: -0.04em;
+}
+
+.quota-empty-state__body p {
+  max-width: 520px;
+}
+
+.quota-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.15rem;
+  align-content: start;
+}
+
+.quota-plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 1.05rem;
+  min-height: 0;
+}
+
+.quota-plan-card__count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0.32rem 0.72rem;
+  border-radius: 999px;
+  background: rgba(214, 235, 224, 0.56);
+  color: var(--accent);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.quota-plan-card__buckets {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.quota-plan-card__buckets--visual {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.quota-bucket {
+  display: grid;
+  gap: 0.62rem;
+  padding: 1.18rem 1.18rem 1.08rem;
+  min-height: 232px;
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at top right, rgba(24, 95, 74, 0.1), transparent 34%),
+    linear-gradient(180deg, rgba(250, 247, 241, 0.98), rgba(244, 238, 229, 0.96));
+  border: 1px solid rgba(38, 34, 27, 0.08);
+  box-shadow: 0 18px 34px rgba(50, 42, 24, 0.06);
+}
+
+.quota-bucket__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.quota-bucket__head strong {
+  font-size: 1rem;
+}
+
+.quota-bucket__head span {
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.quota-bucket__value {
+  font-size: 1.8rem;
+  font-weight: 800;
+  line-height: 1.05;
+  color: var(--ink);
+}
+
+.quota-bucket__value--hero {
+  font-size: clamp(2.35rem, 3vw, 3.2rem);
+  letter-spacing: -0.03em;
+}
+
+.quota-bucket__meter {
+  position: relative;
+  height: 16px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(24, 95, 74, 0.08);
+  border: 1px solid rgba(24, 95, 74, 0.1);
+}
+
+.quota-bucket__meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2d8b6b;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32);
+  transition: width 180ms ease, background-color 180ms ease;
+}
+
+.quota-bucket__stats {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+}
+
+.quota-bucket__reset {
+  margin-top: auto;
+}
+
 .locale-switcher {
   width: 156px;
 }
@@ -2010,6 +2216,48 @@ select {
   flex-direction: column;
   align-items: stretch;
   justify-content: flex-start;
+}
+
+.app-shell--compact .quota-hero {
+  gap: 0.85rem;
+}
+
+.app-shell--compact .quota-hero__actions,
+.app-shell--compact .quota-hero__meta {
+  width: 100%;
+  align-items: flex-start;
+  text-align: left;
+}
+
+.app-shell--compact .quota-hero__actions .el-button {
+  align-self: flex-start;
+}
+
+.app-shell--compact .quota-grid {
+  grid-template-columns: 1fr;
+  gap: 0.85rem;
+}
+
+.app-shell--compact .quota-plan-card__buckets--visual {
+  grid-template-columns: 1fr;
+}
+
+.app-shell--compact .quota-bucket__head {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.app-shell--compact .quota-bucket__head span {
+  white-space: normal;
+}
+
+.app-shell--compact .quota-bucket {
+  min-height: 0;
+  padding: 1rem 1rem 0.96rem;
+}
+
+.app-shell--compact .quota-bucket__value--hero {
+  font-size: clamp(2rem, 7vw, 2.55rem);
 }
 
 .app-shell--compact .view-shell--accounts .toolbar-group:first-child {

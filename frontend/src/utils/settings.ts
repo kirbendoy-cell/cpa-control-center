@@ -18,10 +18,20 @@ export function createDefaultSettings(): AppSettings {
     skipKnown401: true,
     probeWorkers: 40,
     actionWorkers: 20,
+    quotaWorkers: 10,
     timeoutSeconds: 15,
     retries: 3,
     userAgent: 'codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal',
     quotaAction: 'disable',
+    quotaCheckFree: false,
+    quotaCheckPlus: true,
+    quotaCheckPro: true,
+    quotaCheckTeam: true,
+    quotaCheckBusiness: true,
+    quotaCheckEnterprise: true,
+    quotaFreeMaxAccounts: 100,
+    quotaAutoRefreshEnabled: false,
+    quotaAutoRefreshCron: '',
     delete401: true,
     autoReenable: true,
     exportDirectory: '',
@@ -48,6 +58,9 @@ export function validateSettings(settings: AppSettings, t: Translate = fallbackT
   if (settings.actionWorkers < 1) {
     errors.actionWorkers = t('validation.actionWorkersMin')
   }
+  if (settings.quotaWorkers < 1) {
+    errors.quotaWorkers = t('validation.quotaWorkersMin')
+  }
   if (!['full', 'incremental'].includes(settings.scanStrategy)) {
     errors.scanStrategy = t('validation.scanStrategyInvalid')
   }
@@ -62,6 +75,16 @@ export function validateSettings(settings: AppSettings, t: Translate = fallbackT
   }
   if (!['disable', 'delete'].includes(settings.quotaAction)) {
     errors.quotaAction = t('validation.quotaActionInvalid')
+  }
+  if (settings.quotaFreeMaxAccounts < -1) {
+    errors.quotaFreeMaxAccounts = t('validation.quotaFreeMaxAccountsMin')
+  }
+  if (settings.quotaAutoRefreshEnabled) {
+    if (!settings.quotaAutoRefreshCron.trim()) {
+      errors.quotaAutoRefreshCron = t('validation.quotaAutoRefreshCronRequired')
+    } else if (!isValidCronExpression(settings.quotaAutoRefreshCron)) {
+      errors.quotaAutoRefreshCron = t('validation.quotaAutoRefreshCronInvalid')
+    }
   }
   if (settings.schedule.enabled) {
     if (!['scan', 'maintain'].includes(settings.schedule.mode)) {
@@ -85,7 +108,7 @@ export function createDefaultScheduleSettings(): ScheduleSettings {
   }
 }
 
-function isValidCronExpression(value: string): boolean {
+export function isValidCronExpression(value: string): boolean {
   const parts = value.trim().split(/\s+/)
   if (parts.length !== 5) {
     return false
@@ -102,8 +125,37 @@ function isValidCronExpression(value: string): boolean {
   return parts.every((field, index) => isValidCronField(field, fieldSpecs[index].min, fieldSpecs[index].max))
 }
 
+export function cronMatchesDate(expression: string, date: Date): boolean {
+  const parts = expression.trim().split(/\s+/)
+  if (parts.length !== 5) {
+    return false
+  }
+
+  const values = [
+    date.getMinutes(),
+    date.getHours(),
+    date.getDate(),
+    date.getMonth() + 1,
+    date.getDay(),
+  ]
+
+  const fieldSpecs: Array<{ min: number; max: number }> = [
+    { min: 0, max: 59 },
+    { min: 0, max: 23 },
+    { min: 1, max: 31 },
+    { min: 1, max: 12 },
+    { min: 0, max: 7 },
+  ]
+
+  return parts.every((field, index) => cronFieldMatches(field, values[index], fieldSpecs[index].min, fieldSpecs[index].max))
+}
+
 function isValidCronField(field: string, min: number, max: number): boolean {
   return field.split(',').every((segment) => isValidCronSegment(segment.trim(), min, max))
+}
+
+function cronFieldMatches(field: string, value: number, min: number, max: number): boolean {
+  return field.split(',').some((segment) => cronSegmentMatches(segment.trim(), value, min, max))
 }
 
 function isValidCronSegment(segment: string, min: number, max: number): boolean {
@@ -145,4 +197,62 @@ function isValidCronSegment(segment: string, min: number, max: number): boolean 
   const start = Number(rangeMatch[1])
   const end = Number(rangeMatch[2])
   return start >= min && end <= max && start <= end
+}
+
+function cronSegmentMatches(segment: string, value: number, min: number, max: number): boolean {
+  if (!segment) {
+    return false
+  }
+  if (segment === '*') {
+    return true
+  }
+
+  const [base, stepValue] = segment.split('/')
+  if (segment.split('/').length > 2) {
+    return false
+  }
+
+  let baseMatches = false
+  if (base === '*') {
+    baseMatches = value >= min && value <= max
+  } else if (/^\d+$/.test(base)) {
+    baseMatches = Number(base) === value
+  } else {
+    const rangeMatch = base.match(/^(\d+)-(\d+)$/)
+    if (!rangeMatch) {
+      return false
+    }
+    const start = Number(rangeMatch[1])
+    const end = Number(rangeMatch[2])
+    if (start > end) {
+      return false
+    }
+    baseMatches = value >= start && value <= end
+  }
+
+  if (!baseMatches) {
+    return false
+  }
+  if (stepValue === undefined) {
+    return true
+  }
+  if (!/^\d+$/.test(stepValue)) {
+    return false
+  }
+  const step = Number(stepValue)
+  if (!Number.isInteger(step) || step <= 0) {
+    return false
+  }
+  if (base === '*') {
+    return (value - min) % step === 0
+  }
+  if (/^\d+$/.test(base)) {
+    return value === Number(base)
+  }
+  const rangeMatch = base.match(/^(\d+)-(\d+)$/)
+  if (!rangeMatch) {
+    return false
+  }
+  const start = Number(rangeMatch[1])
+  return (value - start) % step === 0
 }

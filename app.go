@@ -123,6 +123,14 @@ func (a *App) GetDashboardSnapshot() (backend.DashboardSnapshot, error) {
 	return service.GetDashboardSnapshot()
 }
 
+func (a *App) GetCodexQuotaSnapshot() (backend.CodexQuotaSnapshot, error) {
+	service, err := a.ensureBackend()
+	if err != nil {
+		return backend.CodexQuotaSnapshot{}, err
+	}
+	return service.GetCodexQuotaSnapshot()
+}
+
 func (a *App) ListAccounts(filter backend.AccountFilter) ([]backend.AccountRecord, error) {
 	service, err := a.ensureBackend()
 	if err != nil {

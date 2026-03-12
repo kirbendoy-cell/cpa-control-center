@@ -23,10 +23,20 @@ export interface AppSettings {
   skipKnown401: boolean
   probeWorkers: number
   actionWorkers: number
+  quotaWorkers: number
   timeoutSeconds: number
   retries: number
   userAgent: string
   quotaAction: string
+  quotaCheckFree: boolean
+  quotaCheckPlus: boolean
+  quotaCheckPro: boolean
+  quotaCheckTeam: boolean
+  quotaCheckBusiness: boolean
+  quotaCheckEnterprise: boolean
+  quotaFreeMaxAccounts: number
+  quotaAutoRefreshEnabled: boolean
+  quotaAutoRefreshCron: string
   delete401: boolean
   autoReenable: boolean
   exportDirectory: string
@@ -126,6 +136,30 @@ export interface DashboardSnapshot {
   history: ScanSummary[]
 }
 
+export interface QuotaBucketSummary {
+  supported: boolean
+  totalRemainingPercent?: number | null
+  resetAt: string
+  successCount: number
+  failedCount: number
+}
+
+export interface CodexPlanQuotaSummary {
+  planType: string
+  accountCount: number
+  fiveHour: QuotaBucketSummary
+  weekly: QuotaBucketSummary
+  codeReviewWeekly: QuotaBucketSummary
+}
+
+export interface CodexQuotaSnapshot {
+  plans: CodexPlanQuotaSummary[]
+  fetchedAt: string
+  totalAccounts: number
+  successfulAccounts: number
+  failedAccounts: number
+}
+
 export interface AccountPage {
   records: AccountRecord[]
   totalRecords: number
@@ -217,7 +251,7 @@ export interface MaintainResult {
 }
 
 export interface TaskProgress {
-  kind: 'scan' | 'maintain' | 'inventory'
+  kind: 'scan' | 'maintain' | 'inventory' | 'quota'
   phase: string
   current: number
   total: number
@@ -226,14 +260,14 @@ export interface TaskProgress {
 }
 
 export interface TaskFinished {
-  kind: 'scan' | 'maintain' | 'inventory'
+  kind: 'scan' | 'maintain' | 'inventory' | 'quota'
   status: string
   message: string
 }
 
 export interface LogEntry {
   id?: string
-  kind: 'scan' | 'maintain' | 'inventory'
+  kind: 'scan' | 'maintain' | 'inventory' | 'quota'
   level: string
   message: string
   timestamp: string
@@ -246,4 +280,4 @@ export interface AccountUpdate {
   record: AccountRecord
 }
 
-export type ViewKey = 'dashboard' | 'accounts' | 'logs' | 'settings'
+export type ViewKey = 'dashboard' | 'accounts' | 'quotas' | 'logs' | 'settings'

@@ -69,6 +69,13 @@ var translations = map[string]map[string]string{
 		"task.maintain.delete_quota":       "Deleting %d quota-limited accounts",
 		"task.maintain.reenable":           "Re-enabling %d recovered accounts",
 		"task.maintain.completed":          "Maintenance completed",
+		"task.quota.started":               "Starting Codex quota refresh",
+		"task.quota.refreshing":            "Refreshing quotas for %d Codex accounts",
+		"task.quota.querying_account":      "Querying %s",
+		"task.quota.account_loaded":        "Loaded quota for %s (%s)",
+		"task.quota.account_failed":        "Quota query failed for %s: %v",
+		"task.quota.completed":             "Quota refresh completed: total=%d, success=%d, failed=%d",
+		"task.quota.no_accounts":           "No Codex accounts found in the current inventory",
 		"task.action.none_queued":          "No accounts queued",
 		"task.action.success":              "%s %s succeeded",
 		"task.action.failed":               "%s %s: %s",
@@ -82,6 +89,7 @@ var translations = map[string]map[string]string{
 		"task.export.completed":            "Exported %d %s accounts to %s",
 		"task.name.scan":                   "Scan",
 		"task.name.maintain":               "Maintain",
+		"task.name.quota":                  "Quota Refresh",
 		"export.kind.invalid401":           "401-invalid",
 		"export.kind.quotaLimited":         "quota-limited",
 		"csv.header.name":                  "name",
@@ -153,6 +161,13 @@ var translations = map[string]map[string]string{
 		"task.maintain.delete_quota":       "正在删除 %d 个限额账号",
 		"task.maintain.reenable":           "正在恢复启用 %d 个已恢复账号",
 		"task.maintain.completed":          "维护流程已完成",
+		"task.quota.started":               "开始刷新 Codex 额度",
+		"task.quota.refreshing":            "正在刷新 %d 个 Codex 账号的额度",
+		"task.quota.querying_account":      "正在查询 %s",
+		"task.quota.account_loaded":        "已加载 %s 的额度（%s）",
+		"task.quota.account_failed":        "%s 的额度查询失败：%v",
+		"task.quota.completed":             "额度刷新完成：总计=%d，成功=%d，失败=%d",
+		"task.quota.no_accounts":           "当前清单中没有 Codex 账号",
 		"task.action.none_queued":          "当前没有待处理账号",
 		"task.action.success":              "%s %s 成功",
 		"task.action.failed":               "%s %s 失败：%s",
@@ -166,6 +181,7 @@ var translations = map[string]map[string]string{
 		"task.export.completed":            "已将 %d 条%s账号导出到 %s",
 		"task.name.scan":                   "扫描",
 		"task.name.maintain":               "维护",
+		"task.name.quota":                  "额度刷新",
 		"export.kind.invalid401":           "401失效",
 		"export.kind.quotaLimited":         "限额",
 		"csv.header.name":                  "名称",
@@ -262,6 +278,8 @@ func taskName(locale string, taskKind string) string {
 			return "库存同步"
 		}
 		return "Inventory Sync"
+	case "quota":
+		return msg(locale, "task.name.quota")
 	default:
 		return msg(locale, "task.name.scan")
 	}

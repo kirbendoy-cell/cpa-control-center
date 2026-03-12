@@ -1,25 +1,35 @@
 package backend
 
 type AppSettings struct {
-	BaseURL         string           `json:"baseUrl"`
-	ManagementToken string           `json:"managementToken"`
-	Locale          string           `json:"locale"`
-	DetailedLogs    bool             `json:"detailedLogs"`
-	TargetType      string           `json:"targetType"`
-	Provider        string           `json:"provider"`
-	ScanStrategy    string           `json:"scanStrategy"`
-	ScanBatchSize   int              `json:"scanBatchSize"`
-	SkipKnown401    bool             `json:"skipKnown401"`
-	ProbeWorkers    int              `json:"probeWorkers"`
-	ActionWorkers   int              `json:"actionWorkers"`
-	TimeoutSeconds  int              `json:"timeoutSeconds"`
-	Retries         int              `json:"retries"`
-	UserAgent       string           `json:"userAgent"`
-	QuotaAction     string           `json:"quotaAction"`
-	Delete401       bool             `json:"delete401"`
-	AutoReenable    bool             `json:"autoReenable"`
-	ExportDirectory string           `json:"exportDirectory"`
-	Schedule        ScheduleSettings `json:"schedule"`
+	BaseURL              string           `json:"baseUrl"`
+	ManagementToken      string           `json:"managementToken"`
+	Locale               string           `json:"locale"`
+	DetailedLogs         bool             `json:"detailedLogs"`
+	TargetType           string           `json:"targetType"`
+	Provider             string           `json:"provider"`
+	ScanStrategy         string           `json:"scanStrategy"`
+	ScanBatchSize        int              `json:"scanBatchSize"`
+	SkipKnown401         bool             `json:"skipKnown401"`
+	ProbeWorkers         int              `json:"probeWorkers"`
+	ActionWorkers        int              `json:"actionWorkers"`
+	QuotaWorkers         int              `json:"quotaWorkers"`
+	TimeoutSeconds       int              `json:"timeoutSeconds"`
+	Retries              int              `json:"retries"`
+	UserAgent            string           `json:"userAgent"`
+	QuotaAction          string           `json:"quotaAction"`
+	QuotaCheckFree       bool             `json:"quotaCheckFree"`
+	QuotaCheckPlus       bool             `json:"quotaCheckPlus"`
+	QuotaCheckPro        bool             `json:"quotaCheckPro"`
+	QuotaCheckTeam       bool             `json:"quotaCheckTeam"`
+	QuotaCheckBusiness   bool             `json:"quotaCheckBusiness"`
+	QuotaCheckEnterprise bool             `json:"quotaCheckEnterprise"`
+	QuotaFreeMaxAccounts int              `json:"quotaFreeMaxAccounts"`
+	QuotaAutoRefreshEnabled bool          `json:"quotaAutoRefreshEnabled"`
+	QuotaAutoRefreshCron    string        `json:"quotaAutoRefreshCron"`
+	Delete401            bool             `json:"delete401"`
+	AutoReenable         bool             `json:"autoReenable"`
+	ExportDirectory      string           `json:"exportDirectory"`
+	Schedule             ScheduleSettings `json:"schedule"`
 }
 
 type ScheduleSettings struct {
@@ -50,12 +60,12 @@ type ConnectionResult struct {
 }
 
 type AccountFilter struct {
-	Query    string  `json:"query"`
-	State    string  `json:"state"`
-	Provider string  `json:"provider"`
-	Type     string  `json:"type"`
-	PlanType string  `json:"planType"`
-	Disabled *bool   `json:"disabled"`
+	Query    string `json:"query"`
+	State    string `json:"state"`
+	Provider string `json:"provider"`
+	Type     string `json:"type"`
+	PlanType string `json:"planType"`
+	Disabled *bool  `json:"disabled"`
 }
 
 type AccountRecord struct {
@@ -113,6 +123,30 @@ type DashboardSummary struct {
 type DashboardSnapshot struct {
 	Summary DashboardSummary `json:"summary"`
 	History []ScanSummary    `json:"history"`
+}
+
+type QuotaBucketSummary struct {
+	Supported             bool     `json:"supported"`
+	TotalRemainingPercent *float64 `json:"totalRemainingPercent"`
+	ResetAt               string   `json:"resetAt"`
+	SuccessCount          int      `json:"successCount"`
+	FailedCount           int      `json:"failedCount"`
+}
+
+type CodexPlanQuotaSummary struct {
+	PlanType         string             `json:"planType"`
+	AccountCount     int                `json:"accountCount"`
+	FiveHour         QuotaBucketSummary `json:"fiveHour"`
+	Weekly           QuotaBucketSummary `json:"weekly"`
+	CodeReviewWeekly QuotaBucketSummary `json:"codeReviewWeekly"`
+}
+
+type CodexQuotaSnapshot struct {
+	Plans              []CodexPlanQuotaSummary `json:"plans"`
+	FetchedAt          string                  `json:"fetchedAt"`
+	TotalAccounts      int                     `json:"totalAccounts"`
+	SuccessfulAccounts int                     `json:"successfulAccounts"`
+	FailedAccounts     int                     `json:"failedAccounts"`
 }
 
 type AccountPage struct {

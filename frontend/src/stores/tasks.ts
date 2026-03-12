@@ -19,6 +19,7 @@ interface TasksState {
   scan: TaskTracker
   maintain: TaskTracker
   inventory: TaskTracker
+  quota: TaskTracker
   inventoryQueued: boolean
   logs: LogEntry[]
   initialised: boolean
@@ -34,14 +35,14 @@ function emptyTracker(): TaskTracker {
   }
 }
 
-function progressEntryId(kind: 'scan' | 'maintain' | 'inventory'): string {
+function progressEntryId(kind: 'scan' | 'maintain' | 'inventory' | 'quota'): string {
   return `${kind}:progress`
 }
 
 function progressMessage(payload: TaskProgress): string {
   const phase = taskPhaseLabel(payload.phase)
   if (payload.total > 0) {
-    return `${phase} ${payload.current}/${payload.total}`
+    return payload.message ? `${phase} ${payload.current}/${payload.total} · ${payload.message}` : `${phase} ${payload.current}/${payload.total}`
   }
   return payload.message || phase
 }
@@ -51,12 +52,13 @@ export const useTasksStore = defineStore('tasksStore', {
     scan: emptyTracker(),
     maintain: emptyTracker(),
     inventory: emptyTracker(),
+    quota: emptyTracker(),
     inventoryQueued: false,
     logs: [],
     initialised: false,
   }),
   getters: {
-    hasActiveTask: (state) => state.scan.active || state.maintain.active || state.inventory.active,
+    hasActiveTask: (state) => state.scan.active || state.maintain.active || state.inventory.active || state.quota.active,
   },
   actions: {
     initEventBridge() {
@@ -67,6 +69,7 @@ export const useTasksStore = defineStore('tasksStore', {
       EventsOn('scan:log', (entry: LogEntry) => this.pushLog(entry))
       EventsOn('maintain:log', (entry: LogEntry) => this.pushLog(entry))
       EventsOn('inventory:log', (entry: LogEntry) => this.pushLog(entry))
+      EventsOn('quota:log', (entry: LogEntry) => this.pushLog(entry))
       EventsOn('scan:progress', (payload: TaskProgress) => {
         const message = progressMessage(payload)
         this.scan = {
@@ -100,6 +103,17 @@ export const useTasksStore = defineStore('tasksStore', {
         }
         this.upsertProgressLog('inventory', payload, message)
       })
+      EventsOn('quota:progress', (payload: TaskProgress) => {
+        const message = progressMessage(payload)
+        this.quota = {
+          active: !payload.done,
+          phase: payload.phase,
+          current: payload.current,
+          total: payload.total,
+          message,
+        }
+        this.upsertProgressLog('quota', payload, message)
+      })
       EventsOn('task:finished', (payload: TaskFinished) => {
         if (payload.kind === 'scan') {
           this.scan.active = false
@@ -107,9 +121,13 @@ export const useTasksStore = defineStore('tasksStore', {
           this.maintain.active = false
         } else if (payload.kind === 'inventory') {
           this.inventory.active = false
+        } else if (payload.kind === 'quota') {
+          this.quota.active = false
         }
-        void useAccountsStore().refreshAll()
-        if (this.inventoryQueued && !this.scan.active && !this.maintain.active && !this.inventory.active) {
+        if (payload.kind !== 'quota') {
+          void useAccountsStore().refreshAll()
+        }
+        if (this.inventoryQueued && !this.scan.active && !this.maintain.active && !this.inventory.active && !this.quota.active) {
           this.inventoryQueued = false
           void this.runInventory().catch(() => {})
         }
@@ -124,9 +142,11 @@ export const useTasksStore = defineStore('tasksStore', {
       EventsOff('scan:log')
       EventsOff('maintain:log')
       EventsOff('inventory:log')
+      EventsOff('quota:log')
       EventsOff('scan:progress')
       EventsOff('maintain:progress')
       EventsOff('inventory:progress')
+      EventsOff('quota:progress')
       EventsOff('task:finished')
       this.initialised = false
     },
@@ -140,7 +160,7 @@ export const useTasksStore = defineStore('tasksStore', {
       this.logs.unshift(entry)
       this.logs = this.logs.slice(0, 500)
     },
-    upsertProgressLog(kind: 'scan' | 'maintain' | 'inventory', payload: TaskProgress, message: string) {
+    upsertProgressLog(kind: 'scan' | 'maintain' | 'inventory' | 'quota', payload: TaskProgress, message: string) {
       this.pushLog({
         id: progressEntryId(kind),
         kind,
@@ -187,7 +207,7 @@ export const useTasksStore = defineStore('tasksStore', {
       }
     },
     scheduleInventorySync() {
-      if (this.scan.active || this.maintain.active || this.inventory.active) {
+      if (this.scan.active || this.maintain.active || this.inventory.active || this.quota.active) {
         this.inventoryQueued = true
         return 'queued' as const
       }

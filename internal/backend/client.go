@@ -181,6 +181,39 @@ func (c *Client) ProbeUsage(ctx context.Context, settings AppSettings, record Ac
 	return probed
 }
 
+func (c *Client) FetchWhamUsage(ctx context.Context, settings AppSettings, record AccountRecord) (map[string]any, error) {
+	if strings.TrimSpace(record.ChatGPTAccountID) == "" {
+		return nil, errors.New(msg(settings.Locale, "error.missing_chatgpt_account_id"))
+	}
+
+	payload := map[string]any{
+		"authIndex": record.AuthIndex,
+		"method":    http.MethodGet,
+		"url":       whamUsageURL,
+		"header": map[string]string{
+			"Authorization":      "Bearer $TOKEN$",
+			"Content-Type":       "application/json",
+			"User-Agent":         settings.UserAgent,
+			"Chatgpt-Account-Id": record.ChatGPTAccountID,
+		},
+	}
+
+	body, err := c.doRequest(ctx, settings, http.MethodPost, settings.BaseURL+"/v0/management/api-call", payload)
+	if err != nil {
+		return nil, err
+	}
+
+	statusCode, ok := intValueFromAny(body["status_code"])
+	if !ok {
+		return nil, errors.New(msg(settings.Locale, "error.missing_status_code"))
+	}
+	if statusCode != http.StatusOK {
+		return nil, errors.New(msg(settings.Locale, "error.unexpected_upstream_status", statusCode))
+	}
+
+	return toJSONObject(settings.Locale, body["body"])
+}
+
 func (c *Client) probeUsageOnce(ctx context.Context, settings AppSettings, record AccountRecord) AccountRecord {
 	record = resetProbeState(record)
 

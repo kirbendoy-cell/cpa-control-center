@@ -8,6 +8,12 @@ describe('validateSettings', () => {
     expect(settings.scanStrategy).toBe('full')
     expect(settings.scanBatchSize).toBe(1000)
     expect(settings.skipKnown401).toBe(true)
+    expect(settings.quotaWorkers).toBe(10)
+    expect(settings.quotaCheckFree).toBe(false)
+    expect(settings.quotaCheckTeam).toBe(true)
+    expect(settings.quotaFreeMaxAccounts).toBe(100)
+    expect(settings.quotaAutoRefreshEnabled).toBe(false)
+    expect(settings.quotaAutoRefreshCron).toBe('')
     settings.baseUrl = 'https://example.com'
     settings.managementToken = 'token'
 
@@ -19,11 +25,15 @@ describe('validateSettings', () => {
     settings.baseUrl = 'example.com'
     settings.managementToken = ''
     settings.probeWorkers = 0
+    settings.quotaWorkers = 0
+    settings.quotaFreeMaxAccounts = -2
 
     expect(validateSettings(settings)).toMatchObject({
       baseUrl: expect.any(String),
       managementToken: expect.any(String),
       probeWorkers: expect.any(String),
+      quotaWorkers: expect.any(String),
+      quotaFreeMaxAccounts: expect.any(String),
     })
   })
 
@@ -37,6 +47,18 @@ describe('validateSettings', () => {
 
     expect(validateSettings(settings)).toMatchObject({
       scheduleCron: expect.any(String),
+    })
+  })
+
+  it('rejects invalid quota auto refresh cron when enabled', () => {
+    const settings = createDefaultSettings()
+    settings.baseUrl = 'https://example.com'
+    settings.managementToken = 'token'
+    settings.quotaAutoRefreshEnabled = true
+    settings.quotaAutoRefreshCron = 'bad cron'
+
+    expect(validateSettings(settings)).toMatchObject({
+      quotaAutoRefreshCron: expect.any(String),
     })
   })
 

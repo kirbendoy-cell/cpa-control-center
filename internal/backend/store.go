@@ -182,6 +182,33 @@ func (s *Store) LoadSettings() (AppSettings, error) {
 	if _, ok := keys["skipKnown401"]; !ok {
 		raw.SkipKnown401 = defaults.SkipKnown401
 	}
+	if _, ok := keys["quotaCheckFree"]; !ok {
+		raw.QuotaCheckFree = defaults.QuotaCheckFree
+	}
+	if _, ok := keys["quotaCheckPlus"]; !ok {
+		raw.QuotaCheckPlus = defaults.QuotaCheckPlus
+	}
+	if _, ok := keys["quotaCheckPro"]; !ok {
+		raw.QuotaCheckPro = defaults.QuotaCheckPro
+	}
+	if _, ok := keys["quotaCheckTeam"]; !ok {
+		raw.QuotaCheckTeam = defaults.QuotaCheckTeam
+	}
+	if _, ok := keys["quotaCheckBusiness"]; !ok {
+		raw.QuotaCheckBusiness = defaults.QuotaCheckBusiness
+	}
+	if _, ok := keys["quotaCheckEnterprise"]; !ok {
+		raw.QuotaCheckEnterprise = defaults.QuotaCheckEnterprise
+	}
+	if _, ok := keys["quotaFreeMaxAccounts"]; !ok {
+		raw.QuotaFreeMaxAccounts = defaults.QuotaFreeMaxAccounts
+	}
+	if _, ok := keys["quotaAutoRefreshEnabled"]; !ok {
+		raw.QuotaAutoRefreshEnabled = defaults.QuotaAutoRefreshEnabled
+	}
+	if _, ok := keys["quotaAutoRefreshCron"]; !ok {
+		raw.QuotaAutoRefreshCron = defaults.QuotaAutoRefreshCron
+	}
 
 	return normalizeSettings(raw, s.exportsDir), nil
 }

@@ -13,15 +13,15 @@ import (
 )
 
 type fakeCPAServer struct {
-	mu        sync.Mutex
-	files     []map[string]any
-	deleted   []string
-	disabled  []string
-	reenabled []string
-	fetches   int
+	mu         sync.Mutex
+	files      []map[string]any
+	deleted    []string
+	disabled   []string
+	reenabled  []string
+	fetches    int
 	configHits int
-	apiCalls  int
-	apiAuths  []string
+	apiCalls   int
+	apiAuths   []string
 }
 
 type capturedEvent struct {
@@ -295,6 +295,201 @@ func TestSyncInventoryEmitsInventoryTaskEvents(t *testing.T) {
 	}
 	if lastFinished.Kind != "inventory" || lastFinished.Status != "success" {
 		t.Fatalf("unexpected finished payload: %+v", lastFinished)
+	}
+}
+
+func TestGetCodexQuotaSnapshotGroupsPlansAndKeepsPartialFailures(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v0/management/auth-files":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"files": []map[string]any{
+					{
+						"name":       "team-one.json",
+						"type":       "codex",
+						"provider":   "codex",
+						"auth_index": "team-one",
+						"id_token":   `{"chatgpt_account_id":"acct-team-1","plan_type":"team"}`,
+					},
+					{
+						"name":       "team-two.json",
+						"type":       "codex",
+						"provider":   "codex",
+						"auth_index": "team-two",
+						"id_token":   `{"chatgpt_account_id":"acct-team-2","plan_type":"team"}`,
+					},
+					{
+						"name":       "free-one.json",
+						"type":       "codex",
+						"provider":   "codex",
+						"auth_index": "free-one",
+						"id_token":   `{"chatgpt_account_id":"acct-free-1","plan_type":"free"}`,
+					},
+					{
+						"name":       "claude-one.json",
+						"type":       "claude",
+						"provider":   "claude",
+						"auth_index": "claude-one",
+						"id_token":   `{"chatgpt_account_id":"acct-claude-1","plan_type":"team"}`,
+					},
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v0/management/api-call":
+			var body struct {
+				AuthIndex string `json:"authIndex"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			switch body.AuthIndex {
+			case "team-one":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"status_code": 200,
+					"body": `{
+						"plan_type":"team",
+						"rate_limits":{
+							"five_hour":{"used_percent":25,"reset_at":"2026-03-12T05:00:00Z","window_seconds":18000},
+							"weekly":{"used_percent":40,"reset_at":"2026-03-18T00:00:00Z","window_seconds":604800}
+						},
+						"code_review_rate_limit":{"used_percent":50,"reset_at":"2026-03-18T00:00:00Z","window_seconds":604800}
+					}`,
+				})
+			case "team-two":
+				http.Error(w, `{"error":"temporary upstream failure"}`, http.StatusBadGateway)
+			case "free-one":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"status_code": 200,
+					"body": `{
+						"plan_type":"free",
+						"rate_limits":{
+							"weekly":{"used_percent":10,"reset_at":"2026-03-18T00:00:00Z","window_seconds":604800}
+						},
+						"code_review_rate_limit":{"used_percent":30,"reset_at":"2026-03-18T00:00:00Z","window_seconds":604800}
+					}`,
+				})
+			default:
+				http.NotFound(w, r)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	service, err := New(t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("New backend: %v", err)
+	}
+	defer service.Close()
+
+	if _, err := service.SaveSettings(AppSettings{
+		BaseURL:              server.URL,
+		ManagementToken:      "token",
+		Locale:               localeEnglish,
+		TargetType:           "codex",
+		ProbeWorkers:         4,
+		ActionWorkers:        2,
+		QuotaWorkers:         3,
+		TimeoutSeconds:       5,
+		Retries:              0,
+		UserAgent:            defaultUserAgent,
+		QuotaAction:          "disable",
+		QuotaCheckFree:       true,
+		QuotaCheckTeam:       true,
+		QuotaFreeMaxAccounts: 100,
+		Delete401:            true,
+		AutoReenable:         true,
+	}); err != nil {
+		t.Fatalf("SaveSettings: %v", err)
+	}
+
+	snapshot, err := service.GetCodexQuotaSnapshot()
+	if err != nil {
+		t.Fatalf("GetCodexQuotaSnapshot: %v", err)
+	}
+	if snapshot.TotalAccounts != 3 || snapshot.SuccessfulAccounts != 2 || snapshot.FailedAccounts != 1 {
+		t.Fatalf("unexpected snapshot counters: %+v", snapshot)
+	}
+	if len(snapshot.Plans) != 2 {
+		t.Fatalf("expected two plan cards, got %d", len(snapshot.Plans))
+	}
+	if snapshot.Plans[0].PlanType != "free" || snapshot.Plans[1].PlanType != "team" {
+		t.Fatalf("unexpected plan order: %+v", snapshot.Plans)
+	}
+
+	freePlan := snapshot.Plans[0]
+	if freePlan.AccountCount != 1 || freePlan.FiveHour.Supported {
+		t.Fatalf("unexpected free plan summary: %+v", freePlan)
+	}
+	if freePlan.Weekly.SuccessCount != 1 || freePlan.Weekly.FailedCount != 0 {
+		t.Fatalf("unexpected free weekly coverage: %+v", freePlan.Weekly)
+	}
+
+	teamPlan := snapshot.Plans[1]
+	if teamPlan.AccountCount != 2 {
+		t.Fatalf("unexpected team account count: %+v", teamPlan)
+	}
+	if teamPlan.FiveHour.SuccessCount != 1 || teamPlan.FiveHour.FailedCount != 1 {
+		t.Fatalf("unexpected team five-hour coverage: %+v", teamPlan.FiveHour)
+	}
+	if teamPlan.Weekly.SuccessCount != 1 || teamPlan.Weekly.FailedCount != 1 {
+		t.Fatalf("unexpected team weekly coverage: %+v", teamPlan.Weekly)
+	}
+	if teamPlan.CodeReviewWeekly.SuccessCount != 1 || teamPlan.CodeReviewWeekly.FailedCount != 1 {
+		t.Fatalf("unexpected team code-review coverage: %+v", teamPlan.CodeReviewWeekly)
+	}
+	if teamPlan.FiveHour.TotalRemainingPercent == nil || *teamPlan.FiveHour.TotalRemainingPercent != 75 {
+		t.Fatalf("unexpected team five-hour remaining: %+v", teamPlan.FiveHour)
+	}
+}
+
+func TestParseQuotaBucketResultDoesNotUseFiveHourResetForWeekly(t *testing.T) {
+	payload := map[string]any{
+		"rate_limits": map[string]any{
+			"five_hour": map[string]any{
+				"used_percent":   25,
+				"reset_at":       "2026-03-12T05:00:00Z",
+				"window_seconds": 18000,
+			},
+			"weekly": map[string]any{
+				"used_percent":   40,
+				"reset_at":       "2026-03-18T00:00:00Z",
+				"window_seconds": 604800,
+			},
+		},
+	}
+
+	result, err := parseQuotaBucketResult(payload)
+	if err != nil {
+		t.Fatalf("parseQuotaBucketResult: %v", err)
+	}
+	if result.fiveHour == nil || result.fiveHour.resetAt != "2026-03-12T05:00:00Z" {
+		t.Fatalf("unexpected five-hour bucket: %+v", result.fiveHour)
+	}
+	if result.weekly == nil || result.weekly.resetAt != "2026-03-18T00:00:00Z" {
+		t.Fatalf("unexpected weekly bucket: %+v", result.weekly)
+	}
+}
+
+func TestParseQuotaBucketResultRejectsAmbiguousWeeklyCandidate(t *testing.T) {
+	payload := map[string]any{
+		"buckets": []any{
+			map[string]any{
+				"used_percent":   15,
+				"reset_at":       "2026-03-12T05:00:00Z",
+				"window_seconds": 18000,
+			},
+			map[string]any{
+				"used_percent": 35,
+				"reset_at":     "2026-03-18T00:00:00Z",
+			},
+		},
+	}
+
+	result, err := parseQuotaBucketResult(payload)
+	if err != nil {
+		t.Fatalf("parseQuotaBucketResult: %v", err)
+	}
+	if result.weekly != nil {
+		t.Fatalf("expected ambiguous weekly bucket to be ignored, got %+v", result.weekly)
 	}
 }
 

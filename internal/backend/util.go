@@ -11,37 +11,49 @@ import (
 )
 
 const (
-	defaultTargetType    = "codex"
-	defaultScanStrategy  = "full"
-	defaultScanBatchSize = 1000
-	defaultProbeWorkers  = 40
-	defaultActionWorkers = 20
-	defaultTimeout       = 15
-	defaultRetries       = 3
-	defaultQuotaAction   = "disable"
-	defaultScheduleMode  = "scan"
-	defaultUserAgent     = "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal"
-	defaultHistoryLimit  = 30
-	whamUsageURL         = "https://chatgpt.com/backend-api/wham/usage"
+	defaultTargetType           = "codex"
+	defaultScanStrategy         = "full"
+	defaultScanBatchSize        = 1000
+	defaultProbeWorkers         = 40
+	defaultActionWorkers        = 20
+	defaultQuotaWorkers         = 10
+	defaultTimeout              = 15
+	defaultRetries              = 3
+	defaultQuotaAction          = "disable"
+	defaultQuotaFreeMaxAccounts = 100
+	defaultScheduleMode         = "scan"
+	defaultUserAgent            = "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal"
+	defaultHistoryLimit         = 30
+	whamUsageURL                = "https://chatgpt.com/backend-api/wham/usage"
 )
 
 func defaultSettings(exportDir string) AppSettings {
 	return AppSettings{
-		Locale:          localeOrDefault(""),
-		DetailedLogs:    false,
-		TargetType:      defaultTargetType,
-		ScanStrategy:    defaultScanStrategy,
-		ScanBatchSize:   defaultScanBatchSize,
-		SkipKnown401:    true,
-		ProbeWorkers:    defaultProbeWorkers,
-		ActionWorkers:   defaultActionWorkers,
-		TimeoutSeconds:  defaultTimeout,
-		Retries:         defaultRetries,
-		UserAgent:       defaultUserAgent,
-		QuotaAction:     defaultQuotaAction,
-		Delete401:       true,
-		AutoReenable:    true,
-		ExportDirectory: exportDir,
+		Locale:               localeOrDefault(""),
+		DetailedLogs:         false,
+		TargetType:           defaultTargetType,
+		ScanStrategy:         defaultScanStrategy,
+		ScanBatchSize:        defaultScanBatchSize,
+		SkipKnown401:         true,
+		ProbeWorkers:         defaultProbeWorkers,
+		ActionWorkers:        defaultActionWorkers,
+		QuotaWorkers:         defaultQuotaWorkers,
+		TimeoutSeconds:       defaultTimeout,
+		Retries:              defaultRetries,
+		UserAgent:            defaultUserAgent,
+		QuotaAction:          defaultQuotaAction,
+		QuotaCheckFree:       false,
+		QuotaCheckPlus:       true,
+		QuotaCheckPro:        true,
+		QuotaCheckTeam:       true,
+		QuotaCheckBusiness:   true,
+		QuotaCheckEnterprise: true,
+		QuotaFreeMaxAccounts: defaultQuotaFreeMaxAccounts,
+		QuotaAutoRefreshEnabled: false,
+		QuotaAutoRefreshCron:    "",
+		Delete401:            true,
+		AutoReenable:         true,
+		ExportDirectory:      exportDir,
 		Schedule: ScheduleSettings{
 			Enabled: false,
 			Mode:    defaultScheduleMode,
@@ -82,6 +94,9 @@ func normalizeSettings(input AppSettings, exportDir string) AppSettings {
 	if input.ActionWorkers > 0 {
 		settings.ActionWorkers = input.ActionWorkers
 	}
+	if input.QuotaWorkers > 0 {
+		settings.QuotaWorkers = input.QuotaWorkers
+	}
 	if input.TimeoutSeconds > 0 {
 		settings.TimeoutSeconds = input.TimeoutSeconds
 	}
@@ -94,6 +109,17 @@ func normalizeSettings(input AppSettings, exportDir string) AppSettings {
 	if trimmed := strings.ToLower(strings.TrimSpace(input.QuotaAction)); trimmed == "delete" || trimmed == "disable" {
 		settings.QuotaAction = trimmed
 	}
+	settings.QuotaCheckFree = input.QuotaCheckFree
+	settings.QuotaCheckPlus = input.QuotaCheckPlus
+	settings.QuotaCheckPro = input.QuotaCheckPro
+	settings.QuotaCheckTeam = input.QuotaCheckTeam
+	settings.QuotaCheckBusiness = input.QuotaCheckBusiness
+	settings.QuotaCheckEnterprise = input.QuotaCheckEnterprise
+	if input.QuotaFreeMaxAccounts >= -1 {
+		settings.QuotaFreeMaxAccounts = input.QuotaFreeMaxAccounts
+	}
+	settings.QuotaAutoRefreshEnabled = input.QuotaAutoRefreshEnabled
+	settings.QuotaAutoRefreshCron = strings.TrimSpace(input.QuotaAutoRefreshCron)
 	settings.Delete401 = input.Delete401
 	settings.AutoReenable = input.AutoReenable
 	if trimmed := strings.TrimSpace(input.ExportDirectory); trimmed != "" {
